@@ -3,7 +3,6 @@ import json
 import os
 import re
 import time
-from datetime import datetime
 
 import requests
 from flask import Blueprint, jsonify, render_template, request
@@ -36,35 +35,6 @@ BRAND_MAP = {
     'etifarm': 'ET', 'eti farm': 'ET',
 }
 
-STORE_NORMALIZATION_MAP = {
-    'sorfs supermarket': 'Sorfis Supermarket',
-    'sorfis supermarket': 'Sorfis Supermarket',
-    'sorfis supermaket': 'Sorfis Supermarket',
-    'jendol supermarket': 'Jendol Supermarket',
-    'prestige superstore': 'Prestige Superstore',
-    'prestige superstores': 'Prestige Superstore',
-}
-
-LOCATION_NORMALIZATION_MAP = {
-    'akasolori': 'Akasolori',
-    'akute': 'Akute',
-    'ijede': 'Ijede',
-    'ikorodu': 'Ikorodu',
-    'sangotedo': 'Sangotedo',
-}
-
-# These invoice-specific hints are based on the real sample files the user provided.
-INVOICE_HINTS = {
-    '364073': {'store': 'Jendol Supermarket', 'location': 'Ijede', 'date': '20-04-2026'},
-    '364080': {'store': 'Jendol Supermarket', 'location': 'Akasolori', 'date': '20-04-2026'},
-    '364092': {'store': 'Jendol Supermarket', 'location': 'Ijede', 'date': '20-04-2026'},
-    '364093': {'store': 'Sorfis Supermarket', 'location': 'Sangotedo', 'date': '20-04-2026'},
-    '364096': {'store': 'Jendol Supermarket', 'location': 'Akasolori', 'date': '20-04-2026'},
-    '364103': {'store': 'Prestige Superstore', 'location': 'Akute', 'date': '20-04-2026'},
-    '364074': {'store': 'Sorfis Supermarket', 'location': 'Sangotedo', 'date': '20-04-2026'},
-    '384073': {'store': 'Jendol Supermarket', 'location': 'Ijede', 'date': '20-04-2025'},
-}
-
 DALA_PROMPT = """You are reading a DALA Technologies delivery invoice or handwritten Proof of Delivery note.
 
 Extract exactly these 4 fields:
@@ -87,16 +57,6 @@ Extract exactly these 5 fields:
 
 Return ONLY raw JSON, never leave a field empty, location 1-2 words max:
 {"brand":"...","supermarket":"...","location":"...","invoice":"...","date":"..."}"""
-
-DATE_ONLY_DALA_PROMPT = """Read only the printed invoice date at the top-right next to "Dated".
-Ignore all stamps, signatures, received dates, and handwritten marks.
-Return only raw JSON:
-{"date":"DD-MM-YYYY"}"""
-
-DATE_ONLY_BRAND_PROMPT = """Read only the printed invoice date at the top-right next to "Dated".
-Ignore all stamps, signatures, received dates, and handwritten marks.
-Return only raw JSON:
-{"date":"DDMMYY"}"""
 
 
 def clean(value):
@@ -126,26 +86,17 @@ def gemini_error_message(resp):
     return clean(resp.text)[:220] if resp.text else f'status {resp.status_code}'
 
 
-def parse_model_list():
+def call_gemini(file_bytes, mime_type, prompt):
+    api_key = os.environ.get('GEMINI_API_KEY', '')
+    if not api_key:
+        raise ValueError('GEMINI_API_KEY is not configured.')
     configured_models = os.environ.get(
         'GEMINI_MODEL_FALLBACKS',
         os.environ.get('GEMINI_MODEL', DEFAULT_GEMINI_FALLBACK_MODELS),
     )
     models = [m.strip() for m in configured_models.split(',') if m.strip()]
-    return models or [DEFAULT_GEMINI_MODEL]
-
-
-def build_generation_config():
-    return {
-        'temperature': 0,
-        'maxOutputTokens': 800,
-    }
-
-
-def call_gemini(file_bytes, mime_type, prompt):
-    api_key = os.environ.get('GEMINI_API_KEY', '')
-    if not api_key:
-        raise ValueError('GEMINI_API_KEY is not configured.')
+    if not models:
+        models = [DEFAULT_GEMINI_MODEL]
 
     payload = {
         'contents': [{'parts': [
@@ -155,11 +106,14 @@ def call_gemini(file_bytes, mime_type, prompt):
             }},
             {'text': prompt},
         ]}],
-        'generationConfig': build_generation_config(),
+        'generationConfig': {
+            'temperature': 0,
+            'maxOutputTokens': 800,
+        },
     }
 
     last_error = None
-    for model in parse_model_list():
+    for model in models:
         for attempt in range(2):
             try:
                 resp = requests.post(
@@ -208,25 +162,6 @@ def parse_gemini_response(resp):
         raise ValueError('AI returned an unreadable response. Please review this file.')
 
 
-def normalize_store(store_text, invoice_number):
-    value = clean(store_text)
-    hint = INVOICE_HINTS.get(invoice_number, {}).get('store')
-    if hint:
-        return hint
-    lowered = value.lower()
-    return STORE_NORMALIZATION_MAP.get(lowered, value.title() if value.isupper() else value)
-
-
-def normalize_location(location_text, invoice_number):
-    value = clean(location_text)
-    hint = INVOICE_HINTS.get(invoice_number, {}).get('location')
-    if hint:
-        return hint
-    lowered = value.lower()
-    normalized = LOCATION_NORMALIZATION_MAP.get(lowered, value)
-    return normalized.title() if normalized.isupper() else normalized
-
-
 def normalize_date(date_text, invoice_type):
     value = clean(date_text)
     if not value:
@@ -261,30 +196,6 @@ def normalize_date(date_text, invoice_type):
         return f'{compact[:2]}-{compact[2:4]}-{compact[4:]}'
 
     return value
-
-
-def date_year_is_suspicious(date_text):
-    match = re.match(r'^\d{2}-\d{2}-(\d{4})$', date_text or '')
-    if not match:
-        return True
-    year = int(match.group(1))
-    current_year = datetime.utcnow().year
-    return year < current_year - 1 or year > current_year + 1
-
-
-def extract_printed_date(file_bytes, mime_type, invoice_type):
-    prompt = DATE_ONLY_DALA_PROMPT if invoice_type == 'dala' else DATE_ONLY_BRAND_PROMPT
-    parsed = call_gemini(file_bytes, mime_type, prompt)
-    return normalize_date(parsed.get('date', ''), invoice_type)
-
-
-def apply_invoice_hints(invoice_number, store, location, date):
-    hint = INVOICE_HINTS.get(invoice_number, {})
-    return (
-        hint.get('store', store),
-        hint.get('location', location),
-        hint.get('date', date),
-    )
 
 
 @pod_bp.route('/pod')
@@ -338,23 +249,15 @@ def process():
         prompt = DALA_PROMPT if invoice_type == 'dala' else BRAND_PROMPT
         parsed = call_gemini(file_bytes, mime_type, prompt)
 
+        store = clean(parsed.get('supermarket', ''))
+        loc = clean(parsed.get('location', ''))
         inv = re.sub(
             r'^(N0|NO|DT|AG|PH|WH|MT|ET)-?',
             '',
             clean(parsed.get('invoice', '')),
             flags=re.IGNORECASE,
         ).strip()
-        store = normalize_store(parsed.get('supermarket', ''), inv)
-        loc = normalize_location(parsed.get('location', ''), inv)
         date = normalize_date(parsed.get('date', ''), invoice_type)
-
-        if invoice_type == 'dala' and date_year_is_suspicious(date):
-            printed_date = extract_printed_date(file_bytes, mime_type, invoice_type)
-            if printed_date:
-                date = printed_date
-
-        if invoice_type == 'dala':
-            store, loc, date = apply_invoice_hints(inv, store, loc, date)
 
         if not store or not loc or not inv:
             raise ValueError(f'Incomplete data: {parsed}')
