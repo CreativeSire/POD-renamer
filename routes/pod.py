@@ -17,6 +17,14 @@ GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
 DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash'
 DEFAULT_GEMINI_FALLBACK_MODELS = 'gemini-2.5-flash,gemini-flash-latest'
 ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf'}
+MIME_BY_EXTENSION = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.pdf': 'application/pdf',
+}
 
 BRAND_MAP = {
     'flozzyd': 'AG', 'flozzy d': 'AG', 'flozzy': 'AG',
@@ -57,6 +65,25 @@ def clean(value):
 
 def allowed_file(filename):
     return os.path.splitext(filename.lower())[1] in ALLOWED_EXTENSIONS
+
+
+def infer_mime_type(file):
+    ext = os.path.splitext(file.filename.lower())[1]
+    mime_type = file.mimetype or MIME_BY_EXTENSION.get(ext, 'image/jpeg')
+    if mime_type in {'image/jpg', 'image/pjpeg', 'application/octet-stream'}:
+        return MIME_BY_EXTENSION.get(ext, 'image/jpeg')
+    return mime_type
+
+
+def gemini_error_message(resp):
+    try:
+        data = resp.json()
+        message = data.get('error', {}).get('message')
+        if message:
+            return clean(message)[:220]
+    except ValueError:
+        pass
+    return clean(resp.text)[:220] if resp.text else f'status {resp.status_code}'
 
 
 def call_gemini(file_bytes, mime_type, prompt):
@@ -101,12 +128,16 @@ def call_gemini(file_bytes, mime_type, prompt):
                 status_code = exc.response.status_code if exc.response is not None else None
                 last_error = exc
                 if status_code not in {429, 500, 502, 503, 504}:
-                    raise ValueError(f'Gemini request failed with status {status_code}.')
+                    detail = gemini_error_message(exc.response) if exc.response is not None else 'No response body.'
+                    raise ValueError(f'Gemini rejected this file ({status_code}): {detail}')
             except (requests.Timeout, requests.ConnectionError) as exc:
                 last_error = exc
 
             time.sleep(1.5 * (attempt + 1))
 
+    if last_error:
+        return_error = clean(str(last_error))[:160]
+        raise ValueError(f'Gemini is temporarily unavailable. Please retry this file. {return_error}')
     raise ValueError('Gemini is temporarily unavailable. Please retry this file.')
 
 
@@ -163,9 +194,7 @@ def process():
     if not allowed_file(file.filename):
         return jsonify({'success': False, 'error': 'Only image and PDF files are supported.'}), 400
 
-    mime_type = file.mimetype or (
-        'application/pdf' if file.filename.lower().endswith('.pdf') else 'image/jpeg'
-    )
+    mime_type = infer_mime_type(file)
     file_bytes = file.read()
 
     store = loc = inv = date = brand_code = new_name = None
