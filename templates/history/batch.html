@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Batch: {{ batch.name }}{% endblock %}
+{% block page_title %}<i class="bi bi-collection me-2 text-primary"></i>{{ batch.name }}{% endblock %}
+
+{% block topbar_actions %}
+<a href="{{ url_for('history.index') }}" class="btn btn-outline-secondary btn-sm">
+  <i class="bi bi-arrow-left me-1"></i> Back to History
+</a>
+{% endblock %}
+
+{% block content %}
+<!-- Batch summary -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm text-center py-3">
+      <div class="fs-2 fw-bold text-primary">{{ batch.total_files }}</div>
+      <div class="text-muted small">Total Files</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm text-center py-3">
+      <div class="fs-2 fw-bold text-success">{{ batch.passed }}</div>
+      <div class="text-muted small">Passed</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm text-center py-3">
+      <div class="fs-2 fw-bold text-warning">{{ batch.review }}</div>
+      <div class="text-muted small">Needs Review</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm text-center py-3">
+      <div class="fs-4 fw-bold text-info">
+        <span class="badge {% if batch.invoice_type == 'dala' %}bg-primary{% else %}bg-danger{% endif %} fs-6">{{ batch.invoice_type|upper }}</span>
+      </div>
+      <div class="text-muted small mt-1">Type</div>
+    </div>
+  </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+  <div class="card-header bg-white border-bottom d-flex justify-content-between align-items-center">
+    <span class="fw-bold"><i class="bi bi-list-ul me-2 text-primary"></i>File Log</span>
+    <div class="text-muted small">
+      Processed by {{ batch.processed_by }} ·
+      {{ batch.created_at.strftime('%d %b %Y at %H:%M') if batch.created_at else '' }}
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover small mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>#</th>
+            <th>Original Filename</th>
+            <th>Renamed To</th>
+            <th>Store</th>
+            <th>Invoice</th>
+            <th>Date</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for log in logs %}
+          <tr class="{% if log.status == 'review' %}table-warning{% endif %}">
+            <td class="text-muted">{{ loop.index }}</td>
+            <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ log.original_name }}">{{ log.original_name }}</td>
+            <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ log.renamed_to }}">
+              <span class="fw-semibold">{{ log.renamed_to or '—' }}</span>
+            </td>
+            <td>{{ log.store_name or '—' }}</td>
+            <td>{{ log.invoice_number or '—' }}</td>
+            <td class="text-nowrap">{{ log.invoice_date or '—' }}</td>
+            <td>
+              {% if log.status == 'passed' %}
+                <span class="badge bg-success">Passed</span>
+              {% else %}
+                <span class="badge bg-warning text-dark" title="{{ log.error_message or '' }}">
+                  Review {% if log.error_message %}<i class="bi bi-info-circle"></i>{% endif %}
+                </span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

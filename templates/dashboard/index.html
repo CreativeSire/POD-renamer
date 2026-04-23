@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block page_title %}<i class="bi bi-speedometer2 me-2 text-primary"></i>Dashboard{% endblock %}
+
+{% block content %}
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm text-center py-3">
+      <div class="fs-2 fw-bold text-primary">{{ stats.total_files }}</div>
+      <div class="text-muted small">Total Files Processed</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm text-center py-3">
+      <div class="fs-2 fw-bold text-success">{{ stats.total_passed }}</div>
+      <div class="text-muted small">Passed</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm text-center py-3">
+      <div class="fs-2 fw-bold text-warning">{{ stats.total_review }}</div>
+      <div class="text-muted small">Needs Review</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm text-center py-3">
+      <div class="fs-2 fw-bold text-info">{{ stats.files_this_week }}</div>
+      <div class="text-muted small">This Week</div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-lg-8">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white fw-bold border-bottom d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-collection me-2 text-primary"></i>Recent Batches</span>
+        <a href="{{ url_for('history.index') }}" class="btn btn-sm btn-outline-primary">View All</a>
+      </div>
+      <div class="card-body p-0">
+        {% if recent %}
+        <div class="table-responsive">
+          <table class="table table-hover mb-0 small">
+            <thead class="table-light">
+              <tr>
+                <th>Batch Name</th>
+                <th>Type</th>
+                <th class="text-center">Total</th>
+                <th class="text-center">Passed</th>
+                <th class="text-center">Review</th>
+                <th>By</th>
+                <th>Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for b in recent %}
+              <tr onclick="window.location='{{ url_for('history.batch_detail', batch_id=b.id) }}'" style="cursor:pointer;">
+                <td class="fw-semibold">{{ b.name }}</td>
+                <td><span class="badge {% if b.invoice_type == 'dala' %}bg-primary{% else %}bg-pink{% endif %}" style="{% if b.invoice_type == 'brand' %}background:#e91e8c!important{% endif %}">{{ b.invoice_type|upper }}</span></td>
+                <td class="text-center">{{ b.total_files }}</td>
+                <td class="text-center text-success fw-bold">{{ b.passed }}</td>
+                <td class="text-center text-warning fw-bold">{{ b.review }}</td>
+                <td class="text-muted">{{ b.processed_by }}</td>
+                <td class="text-muted">{{ b.created_at.strftime('%d %b %Y') if b.created_at else '' }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5 text-muted">
+          <i class="bi bi-inbox fs-2 d-block mb-2"></i>No batches yet. <a href="{{ url_for('pod.index') }}">Process your first batch</a>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-4">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-white fw-bold border-bottom">
+        <i class="bi bi-shop me-2 text-primary"></i>Top Stores
+      </div>
+      <div class="card-body">
+        {% if top_stores %}
+          {% for s in top_stores %}
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="small fw-semibold">{{ s.store_name }}</span>
+            <span class="badge bg-light text-dark border">{{ s.cnt }}</span>
+          </div>
+          {% endfor %}
+        {% else %}
+          <p class="text-muted small text-center mt-3">No data yet</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

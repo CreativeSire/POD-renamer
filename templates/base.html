@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}POD Renamer{% endblock %} — DALA Technologies</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <style>
+    :root {
+      --sidebar-w: 240px;
+      --brand: #1a1a2e;
+      --accent: #4f46e5;
+      --accent2: #e91e8c;
+    }
+    body { background: #f0f2f5; font-family: 'Segoe UI', sans-serif; }
+    .sidebar {
+      position: fixed; top: 0; left: 0; height: 100vh; width: var(--sidebar-w);
+      background: var(--brand); display: flex; flex-direction: column; z-index: 100;
+    }
+    .sidebar-brand {
+      padding: 20px 20px 16px; font-size: 16px; font-weight: 800;
+      color: white; border-bottom: 1px solid rgba(255,255,255,0.08);
+      display: flex; align-items: center; gap: 10px;
+    }
+    .sidebar-brand .sub { font-size: 10px; font-weight: 400; color: rgba(255,255,255,0.45); display: block; margin-top: 1px; }
+    .sidebar-nav { flex: 1; padding: 12px 10px; overflow-y: auto; }
+    .nav-item {
+      display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+      border-radius: 8px; color: rgba(255,255,255,0.65); font-size: 13px;
+      font-weight: 500; text-decoration: none; transition: all 0.15s; margin-bottom: 2px;
+    }
+    .nav-item:hover { background: rgba(255,255,255,0.08); color: white; }
+    .nav-item.active { background: var(--accent); color: white; }
+    .nav-item i { font-size: 15px; width: 18px; text-align: center; }
+    .nav-section { font-size: 10px; font-weight: 700; color: rgba(255,255,255,0.3);
+      letter-spacing: 1px; padding: 14px 12px 4px; text-transform: uppercase; }
+    .sidebar-footer {
+      padding: 14px 16px; border-top: 1px solid rgba(255,255,255,0.08);
+      display: flex; align-items: center; gap: 10px;
+    }
+    .user-avatar {
+      width: 32px; height: 32px; border-radius: 50%; background: var(--accent);
+      color: white; font-weight: 700; font-size: 13px;
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .user-name { font-size: 13px; font-weight: 600; color: white; }
+    .user-role { font-size: 10px; color: rgba(255,255,255,0.45); }
+    .btn-logout { margin-left: auto; color: rgba(255,255,255,0.45); font-size: 18px; text-decoration: none; }
+    .btn-logout:hover { color: white; }
+    .main-content { margin-left: var(--sidebar-w); min-height: 100vh; }
+    .topbar {
+      background: white; padding: 12px 24px; border-bottom: 1px solid #e9ecef;
+      display: flex; align-items: center; gap: 14px; position: sticky; top: 0; z-index: 50;
+    }
+    .topbar-title { font-size: 15px; font-weight: 700; color: #1a1a2e; flex: 1; }
+    .content-area { padding: 24px; }
+    @media (max-width: 768px) {
+      .sidebar { transform: translateX(-100%); transition: transform 0.25s; }
+      .sidebar.open { transform: translateX(0); }
+      .main-content { margin-left: 0; }
+    }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+<div class="sidebar" id="sidebar">
+  <div class="sidebar-brand">
+    <i class="bi bi-file-earmark-check fs-5"></i>
+    <div>
+      <div>POD Renamer</div>
+      <span class="sub">DALA Technologies</span>
+    </div>
+  </div>
+  <nav class="sidebar-nav">
+    <a href="{{ url_for('dashboard.index') }}"
+       class="nav-item {% if request.endpoint == 'dashboard.index' %}active{% endif %}">
+      <i class="bi bi-speedometer2"></i> Dashboard
+    </a>
+    <a href="{{ url_for('pod.index') }}"
+       class="nav-item {% if 'pod' in request.endpoint %}active{% endif %}">
+      <i class="bi bi-cloud-upload"></i> Process PODs
+    </a>
+    <a href="{{ url_for('history.index') }}"
+       class="nav-item {% if 'history' in request.endpoint %}active{% endif %}">
+      <i class="bi bi-clock-history"></i> History &amp; Logs
+    </a>
+  </nav>
+  <div class="sidebar-footer">
+    <div class="user-avatar">{{ current_user.full_name[0]|upper }}</div>
+    <div>
+      <div class="user-name">{{ current_user.full_name }}</div>
+      <div class="user-role">{{ current_user.role|title }}</div>
+    </div>
+    <a href="{{ url_for('auth.logout') }}" class="btn-logout" title="Logout">
+      <i class="bi bi-box-arrow-right"></i>
+    </a>
+  </div>
+</div>
+
+<div class="main-content" id="main-content">
+  <div class="topbar">
+    <button class="btn btn-sm btn-outline-secondary d-md-none" onclick="document.getElementById('sidebar').classList.toggle('open')">
+      <i class="bi bi-list"></i>
+    </button>
+    <div class="topbar-title">{% block page_title %}{% endblock %}</div>
+    <div>{% block topbar_actions %}{% endblock %}</div>
+  </div>
+
+  <div class="px-4 pt-2">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{ category }} alert-dismissible fade show mt-2" role="alert">
+          {{ message }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+      {% endfor %}
+    {% endwith %}
+  </div>
+
+  <div class="content-area">{% block content %}{% endblock %}</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

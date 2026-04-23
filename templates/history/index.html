@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}History & Logs{% endblock %}
+{% block page_title %}<i class="bi bi-clock-history me-2 text-primary"></i>History &amp; Logs{% endblock %}
+
+{% block content %}
+<!-- Filters -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body py-3">
+    <form method="GET" class="row g-2 align-items-end">
+      <div class="col-12 col-md-4">
+        <input type="text" name="q" class="form-control form-control-sm" placeholder="Search store, invoice, filename..." value="{{ filters.q }}">
+      </div>
+      <div class="col-6 col-md-2">
+        <select name="status" class="form-select form-select-sm">
+          <option value="">All Status</option>
+          <option value="passed" {% if filters.status == 'passed' %}selected{% endif %}>Passed</option>
+          <option value="review" {% if filters.status == 'review' %}selected{% endif %}>Needs Review</option>
+        </select>
+      </div>
+      <div class="col-6 col-md-2">
+        <select name="type" class="form-select form-select-sm">
+          <option value="">All Types</option>
+          <option value="dala" {% if filters.type == 'dala' %}selected{% endif %}>DALA</option>
+          <option value="brand" {% if filters.type == 'brand' %}selected{% endif %}>Brand</option>
+        </select>
+      </div>
+      <div class="col-12 col-md-4 d-flex gap-2">
+        <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-search me-1"></i>Search</button>
+        <a href="{{ url_for('history.index') }}" class="btn btn-outline-secondary btn-sm">Clear</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="row g-4">
+  <!-- Log table -->
+  <div class="col-12 col-lg-8">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white border-bottom d-flex justify-content-between align-items-center">
+        <span class="fw-bold"><i class="bi bi-list-ul me-2 text-primary"></i>File Logs <span class="text-muted fw-normal small">({{ total }} total)</span></span>
+      </div>
+      <div class="card-body p-0">
+        {% if logs %}
+        <div class="table-responsive">
+          <table class="table table-hover small mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Renamed To</th>
+                <th>Store</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Batch</th>
+                <th>Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for log in logs %}
+              <tr>
+                <td>
+                  <div class="fw-semibold" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ log.renamed_to }}">
+                    {{ log.renamed_to or '—' }}
+                  </div>
+                  <div class="text-muted" style="font-size:10px;">{{ log.original_name }}</div>
+                </td>
+                <td>{{ log.store_name or '—' }}</td>
+                <td>
+                  <span class="badge {% if log.invoice_type == 'dala' %}bg-primary{% else %}bg-danger{% endif %}">
+                    {{ log.invoice_type|upper }}
+                  </span>
+                </td>
+                <td>
+                  {% if log.status == 'passed' %}
+                    <span class="badge bg-success">Passed</span>
+                  {% else %}
+                    <span class="badge bg-warning text-dark" title="{{ log.error_message }}">Review</span>
+                  {% endif %}
+                </td>
+                <td class="text-muted small">{{ log.batch_name or '—' }}</td>
+                <td class="text-muted small text-nowrap">{{ log.created_at.strftime('%d %b %y %H:%M') if log.created_at else '' }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Pagination -->
+        {% if total_pages > 1 %}
+        <div class="d-flex justify-content-center py-3 gap-1">
+          {% for p in range(1, total_pages + 1) %}
+            <a href="?page={{ p }}&q={{ filters.q }}&status={{ filters.status }}&type={{ filters.type }}"
+               class="btn btn-sm {% if p == page %}btn-primary{% else %}btn-outline-secondary{% endif %}">{{ p }}</a>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        {% else %}
+        <div class="text-center py-5 text-muted">
+          <i class="bi bi-inbox fs-2 d-block mb-2"></i>No logs found.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Batch list -->
+  <div class="col-12 col-lg-4">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white border-bottom fw-bold">
+        <i class="bi bi-collection me-2 text-primary"></i>Batches
+      </div>
+      <div class="card-body p-0">
+        {% if batches %}
+        <div style="max-height:520px;overflow-y:auto;">
+          {% for b in batches %}
+          <a href="{{ url_for('history.batch_detail', batch_id=b.id) }}" class="d-block text-decoration-none">
+            <div class="d-flex align-items-center gap-2 px-3 py-2 border-bottom hover-bg">
+              <span class="badge {% if b.invoice_type == 'dala' %}bg-primary{% else %}bg-danger{% endif %} flex-shrink-0">{{ b.invoice_type|upper }}</span>
+              <div class="flex-grow-1 min-w-0">
+                <div class="fw-semibold small text-dark" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ b.name }}</div>
+                <div class="text-muted" style="font-size:10px;">{{ b.total_files }} files · {{ b.passed }} passed · {{ b.review }} review</div>
+              </div>
+              <div class="text-muted text-nowrap" style="font-size:10px;">{{ b.created_at.strftime('%d %b') if b.created_at else '' }}</div>
+            </div>
+          </a>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-muted text-center py-4 small">No batches yet</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

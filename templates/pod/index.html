@@ -1,0 +1,409 @@
+{% extends "base.html" %}
+{% block title %}Process PODs{% endblock %}
+{% block page_title %}<i class="bi bi-cloud-upload me-2 text-primary"></i>Process PODs{% endblock %}
+
+{% block head %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+.pod-dropzone {
+  border: 2.5px dashed #c7d2fe; border-radius: 14px; padding: 36px 16px;
+  text-align: center; cursor: pointer; transition: all 0.2s; background: #fafbff;
+}
+.pod-dropzone:hover, .pod-dropzone.dragover { border-color: #4f46e5; background: #eef2ff; }
+.pod-dz-brand { border-color: #f9a8d4; background: #fff6fb; }
+.pod-dz-brand:hover, .pod-dz-brand.dragover { border-color: #e91e8c; background: #fce7f3; }
+.pod-file-list { display:flex; flex-direction:column; gap:6px; max-height:380px; overflow-y:auto; }
+.pod-file-list::-webkit-scrollbar { width:4px; }
+.pod-file-list::-webkit-scrollbar-thumb { background:#dee2e6; border-radius:10px; }
+.pod-fi { display:flex; align-items:center; gap:10px; padding:9px 12px; border-radius:8px; background:#f8f9fa; border:1.5px solid #e9ecef; font-size:13px; transition:all 0.2s; }
+.pod-fi.processing { border-color:#ffc107; background:#fffbeb; }
+.pod-fi.done { border-color:#86efac; background:#f0fdf4; }
+.pod-fi.review { border-color:#fca5a5; background:#fef2f2; }
+.pod-thumb { width:36px; height:36px; border-radius:6px; object-fit:cover; flex-shrink:0; background:#dee2e6; }
+.pod-thumb-pdf { width:36px; height:36px; border-radius:6px; background:#fee2e2; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.pod-finfo { flex:1; min-width:0; }
+.pod-forig { font-size:10px; color:#9ca3af; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pod-fnew { font-weight:600; color:#111827; word-break:break-all; margin-top:1px; }
+.pod-spin { width:14px; height:14px; border:2px solid #ffc107; border-top-color:transparent; border-radius:50%; animation:pod-spin 0.7s linear infinite; display:inline-block; }
+@keyframes pod-spin { to { transform:rotate(360deg); } }
+input[type=file] { display:none; }
+.folder-btn-selected { border-color: #198754 !important; color: #198754 !important; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+
+  <!-- DALA SECTION -->
+  <div class="col-12 col-xl-6">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-white border-bottom d-flex align-items-center gap-2">
+        <span class="badge bg-primary px-3">DALA</span>
+        <div>
+          <div class="fw-bold">DALA Invoices</div>
+          <div class="text-muted" style="font-size:11px;">Supersaver - Osapa DT-035165 - 26-02-2026.pdf</div>
+        </div>
+      </div>
+      <div class="card-body">
+        <!-- Batch name -->
+        <div class="mb-3">
+          <label class="form-label fw-semibold small">Batch Name</label>
+          <input type="text" class="form-control form-control-sm" id="batch-name-dala"
+                 placeholder="e.g. Feb 23 DALA Run" value="">
+        </div>
+
+        <!-- Drop zone -->
+        <div class="pod-dropzone" id="dz-dala"
+             ondragover="dzOver(event,'dala')" ondragleave="dzLeave(event,'dala')" ondrop="dzDrop(event,'dala')">
+          <i class="bi bi-cloud-upload fs-2 text-primary mb-2 d-block"></i>
+          <div class="fw-semibold text-primary">Drag &amp; drop DALA POD folder here</div>
+          <div class="text-muted small mt-1">JPG, PNG, PDF supported</div>
+          <div class="mt-3 d-flex gap-2 justify-content-center flex-wrap">
+            <button class="btn btn-primary btn-sm" onclick="document.getElementById('fi-dala-folder').click()">
+              <i class="bi bi-folder2-open me-1"></i> Browse Folder
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" onclick="document.getElementById('fi-dala-files').click()">
+              <i class="bi bi-images me-1"></i> Select Files
+            </button>
+          </div>
+        </div>
+        <input type="file" id="fi-dala-folder" webkitdirectory multiple accept="image/*,.pdf" onchange="handleFiles('dala',this.files)">
+        <input type="file" id="fi-dala-files" multiple accept="image/*,.pdf" onchange="handleFiles('dala',this.files)">
+
+        <!-- Stats -->
+        <div class="row g-2 mt-3" id="stats-dala" style="display:none;">
+          <div class="col-3 text-center"><div class="fw-bold fs-5 text-primary" id="d-tot">0</div><div class="text-muted" style="font-size:10px;">TOTAL</div></div>
+          <div class="col-3 text-center"><div class="fw-bold fs-5 text-warning" id="d-run">0</div><div class="text-muted" style="font-size:10px;">PROCESSING</div></div>
+          <div class="col-3 text-center"><div class="fw-bold fs-5 text-success" id="d-don">0</div><div class="text-muted" style="font-size:10px;">PASSED</div></div>
+          <div class="col-3 text-center"><div class="fw-bold fs-5 text-danger" id="d-fai">0</div><div class="text-muted" style="font-size:10px;">REVIEW</div></div>
+        </div>
+        <div class="progress mt-2" style="height:6px;display:none;" id="pw-dala">
+          <div class="progress-bar bg-primary" id="pf-dala" style="width:0%;transition:width 0.4s;"></div>
+        </div>
+        <div class="text-muted text-center mt-1" style="font-size:11px;display:none;" id="pl-dala"></div>
+
+        <!-- Actions -->
+        <div class="d-flex gap-2 mt-3" id="ar-dala" style="display:none;">
+          <button class="btn btn-primary btn-sm" id="pb-dala" onclick="processAll('dala')">
+            <i class="bi bi-play-fill me-1"></i> Process All
+          </button>
+          <button class="btn btn-outline-secondary btn-sm" onclick="clearSec('dala')">
+            <i class="bi bi-x me-1"></i> Clear
+          </button>
+        </div>
+
+        <!-- Save section -->
+        <div class="alert alert-success d-flex align-items-center gap-2 mt-3 py-2 flex-wrap" id="zs-dala" style="display:none!important;">
+          <i class="bi bi-check-circle-fill"></i>
+          <div class="flex-grow-1">
+            <div class="fw-bold small">Ready to save!</div>
+            <div class="text-muted" style="font-size:11px;" id="zsub-dala"></div>
+          </div>
+          <button class="btn btn-outline-success btn-sm" id="folder-btn-dala" onclick="pickFolder('dala')">
+            <i class="bi bi-folder2-open me-1"></i><span id="folder-label-dala">Choose Folder</span>
+          </button>
+          <button class="btn btn-success btn-sm" onclick="saveFiles('dala')" id="save-btn-dala">
+            <i class="bi bi-download me-1"></i> Save Files
+          </button>
+        </div>
+
+        <div class="pod-file-list mt-3" id="fl-dala"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BRAND SECTION -->
+  <div class="col-12 col-xl-6">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-white border-bottom d-flex align-items-center gap-2">
+        <span class="badge px-3" style="background:#e91e8c;">BRAND</span>
+        <div>
+          <div class="fw-bold">Brand Partner Invoices</div>
+          <div class="text-muted" style="font-size:11px;">Jendol - Alakuko AG-06081 250226.pdf</div>
+        </div>
+        <span class="ms-auto badge bg-light text-dark border small"><i class="bi bi-magic me-1"></i>Auto-detects brand</span>
+      </div>
+      <div class="card-body">
+        <!-- Batch name -->
+        <div class="mb-3">
+          <label class="form-label fw-semibold small">Batch Name</label>
+          <input type="text" class="form-control form-control-sm" id="batch-name-brand"
+                 placeholder="e.g. Feb 23 FlozzyD Run" value="">
+        </div>
+
+        <!-- Drop zone -->
+        <div class="pod-dropzone pod-dz-brand" id="dz-brand"
+             ondragover="dzOver(event,'brand')" ondragleave="dzLeave(event,'brand')" ondrop="dzDrop(event,'brand')">
+          <i class="bi bi-cloud-upload fs-2 mb-2 d-block" style="color:#e91e8c;"></i>
+          <div class="fw-semibold" style="color:#e91e8c;">Drag &amp; drop Brand Partner folder here</div>
+          <div class="text-muted small mt-1">FlozzyD · Prothrive · Whole Eat · Medi Tea · Etifarm</div>
+          <div class="mt-3 d-flex gap-2 justify-content-center flex-wrap">
+            <button class="btn btn-sm text-white" style="background:#e91e8c;" onclick="document.getElementById('fi-brand-folder').click()">
+              <i class="bi bi-folder2-open me-1"></i> Browse Folder
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" onclick="document.getElementById('fi-brand-files').click()">
+              <i class="bi bi-images me-1"></i> Select Files
+            </button>
+          </div>
+        </div>
+        <input type="file" id="fi-brand-folder" webkitdirectory multiple accept="image/*,.pdf" onchange="handleFiles('brand',this.files)">
+        <input type="file" id="fi-brand-files" multiple accept="image/*,.pdf" onchange="handleFiles('brand',this.files)">
+
+        <!-- Stats -->
+        <div class="row g-2 mt-3" id="stats-brand" style="display:none;">
+          <div class="col-3 text-center"><div class="fw-bold fs-5 text-primary" id="b-tot">0</div><div class="text-muted" style="font-size:10px;">TOTAL</div></div>
+          <div class="col-3 text-center"><div class="fw-bold fs-5 text-warning" id="b-run">0</div><div class="text-muted" style="font-size:10px;">PROCESSING</div></div>
+          <div class="col-3 text-center"><div class="fw-bold fs-5 text-success" id="b-don">0</div><div class="text-muted" style="font-size:10px;">PASSED</div></div>
+          <div class="col-3 text-center"><div class="fw-bold fs-5 text-danger" id="b-fai">0</div><div class="text-muted" style="font-size:10px;">REVIEW</div></div>
+        </div>
+        <div class="progress mt-2" style="height:6px;display:none;" id="pw-brand">
+          <div class="progress-bar" id="pf-brand" style="width:0%;transition:width 0.4s;background:#e91e8c;"></div>
+        </div>
+        <div class="text-muted text-center mt-1" style="font-size:11px;display:none;" id="pl-brand"></div>
+
+        <!-- Actions -->
+        <div class="d-flex gap-2 mt-3" id="ar-brand" style="display:none;">
+          <button class="btn btn-sm text-white" id="pb-brand" style="background:#e91e8c;" onclick="processAll('brand')">
+            <i class="bi bi-play-fill me-1"></i> Process All
+          </button>
+          <button class="btn btn-outline-secondary btn-sm" onclick="clearSec('brand')">
+            <i class="bi bi-x me-1"></i> Clear
+          </button>
+        </div>
+
+        <!-- Save section -->
+        <div class="alert alert-success d-flex align-items-center gap-2 mt-3 py-2 flex-wrap" id="zs-brand" style="display:none!important;">
+          <i class="bi bi-check-circle-fill"></i>
+          <div class="flex-grow-1">
+            <div class="fw-bold small">Ready to save!</div>
+            <div class="text-muted" style="font-size:11px;" id="zsub-brand"></div>
+          </div>
+          <button class="btn btn-outline-success btn-sm" id="folder-btn-brand" onclick="pickFolder('brand')">
+            <i class="bi bi-folder2-open me-1"></i><span id="folder-label-brand">Choose Folder</span>
+          </button>
+          <button class="btn btn-success btn-sm" onclick="saveFiles('brand')" id="save-btn-brand">
+            <i class="bi bi-download me-1"></i> Save Files
+          </button>
+        </div>
+
+        <div class="pod-file-list mt-3" id="fl-brand"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const CONCURRENCY = 4;
+const S = {
+  dala:  { files:[], results:[], blobs:[], batchId:null, folder:'DALA_Renamed' },
+  brand: { files:[], results:[], blobs:[], batchId:null, folder:'Brand_Renamed' }
+};
+const dirHandles = { dala: null, brand: null };
+
+// ── Drag & drop ──────────────────────────────────────────────
+function dzOver(e,s) { e.preventDefault(); document.getElementById('dz-'+s).classList.add('dragover'); }
+function dzLeave(e,s) { if (!document.getElementById('dz-'+s).contains(e.relatedTarget)) document.getElementById('dz-'+s).classList.remove('dragover'); }
+function dzDrop(e,s) {
+  e.preventDefault(); document.getElementById('dz-'+s).classList.remove('dragover');
+  const items=e.dataTransfer.items; const all=[]; let pend=0;
+  for (let i=0;i<items.length;i++) {
+    const en=items[i].webkitGetAsEntry?items[i].webkitGetAsEntry():null;
+    if (en&&en.isDirectory) { S[s].folder=en.name+'_Renamed'; pend++; readDir(en,all,()=>{if(--pend===0)ingest(s,all);}); }
+    else { const f=items[i].getAsFile(); if(f&&okFile(f))all.push(f); }
+  }
+  if (pend===0) ingest(s,all);
+}
+function readDir(dir,col,done) {
+  const r=dir.createReader();
+  function rd() { r.readEntries(ens=>{ if(!ens.length){done();return;} let p=ens.length; const nx=()=>{if(!--p)rd();}; ens.forEach(en=>{ if(en.isFile)en.getFile(f=>{if(okFile(f))col.push(f);nx();},nx); else if(en.isDirectory)readDir(en,col,nx); else nx(); }); }); }
+  rd();
+}
+function okFile(f) { return f.type.startsWith('image/')||f.type==='application/pdf'||/\.(jpe?g|png|gif|webp|pdf)$/i.test(f.name); }
+function handleFiles(s,fl) {
+  const arr=Array.from(fl).filter(okFile);
+  if(arr.length&&arr[0].webkitRelativePath){const p=arr[0].webkitRelativePath.split('/');if(p.length>1)S[s].folder=p[0]+'_Renamed';}
+  ingest(s,arr);
+}
+function ingest(s,arr) {
+  if(!arr.length){alert('No valid image or PDF files found.');return;}
+  S[s].files=arr; S[s].results=arr.map(()=>({status:'waiting',filename:null,error:''})); S[s].blobs=arr.map(()=>null);
+  renderList(s); updStats(s);
+  show('stats-'+s); show('ar-'+s);
+  document.getElementById('pw-'+s).style.display='block';
+  document.getElementById('pl-'+s).style.display='block';
+  document.getElementById('zs-'+s).style.display='none';
+}
+
+// ── Render ───────────────────────────────────────────────────
+function renderList(s) {
+  const list=document.getElementById('fl-'+s); list.innerHTML='';
+  S[s].files.forEach((f,i)=>{
+    const el=document.createElement('div'); el.className='pod-fi waiting'; el.id='fi-'+s+'-'+i;
+    const th=f.type.startsWith('image/')?`<img class="pod-thumb" id="th-${s}-${i}" src="" alt="">`:
+      '<div class="pod-thumb-pdf"><i class="bi bi-file-earmark-pdf text-danger"></i></div>';
+    el.innerHTML=th+`<div class="pod-finfo"><div class="pod-forig">${esc(f.name)}</div><div class="pod-fnew" id="fn-${s}-${i}">Waiting...</div></div><span class="badge bg-secondary" id="bs-${s}-${i}">Waiting</span>`;
+    list.appendChild(el);
+    if(f.type.startsWith('image/')){const r=new FileReader();r.onload=(idx=>e=>{const img=document.getElementById(`th-${s}-${idx}`);if(img)img.src=e.target.result;})(i);r.readAsDataURL(f);}
+  });
+}
+function updItemUI(s,i) {
+  const r=S[s].results[i]; const el=document.getElementById(`fi-${s}-${i}`); if(!el)return;
+  const fn=document.getElementById(`fn-${s}-${i}`); const bs=document.getElementById(`bs-${s}-${i}`);
+  el.className='pod-fi '+r.status;
+  if(r.status==='waiting'){fn.textContent='Waiting...';bs.className='badge bg-secondary';bs.textContent='Waiting';}
+  else if(r.status==='processing'){fn.innerHTML='<span class="text-warning">Extracting...</span>';bs.className='badge bg-warning text-dark';bs.innerHTML='<div class="pod-spin"></div>';}
+  else if(r.status==='done'){fn.textContent=r.filename;bs.className='badge bg-success';bs.textContent='Passed';}
+  else{fn.innerHTML=`<span class="text-danger small">${esc(r.error)}</span>`;bs.className='badge bg-danger';bs.textContent='Review';}
+}
+function updStats(s) {
+  const res=S[s].results; const tot=res.length;
+  const run=res.filter(r=>r.status==='processing').length;
+  const don=res.filter(r=>r.status==='done').length;
+  const fai=res.filter(r=>r.status==='review').length;
+  const fin=don+fai; const p=s[0];
+  document.getElementById(p+'-tot').textContent=tot;
+  document.getElementById(p+'-run').textContent=run;
+  document.getElementById(p+'-don').textContent=don;
+  document.getElementById(p+'-fai').textContent=fai;
+  document.getElementById('pf-'+s).style.width=(tot>0?fin/tot*100:0)+'%';
+  const pl=document.getElementById('pl-'+s);
+  if(pl){pl.style.display='block';pl.textContent=`${fin} of ${tot} processed`;}
+  if(fin===tot&&tot>0){
+    const pb=document.getElementById('pb-'+s);
+    pb.disabled=false; pb.innerHTML='<i class="bi bi-play-fill me-1"></i> Process All';
+    if(don>0){
+      document.getElementById('zs-'+s).style.cssText='display:flex!important;';
+      document.getElementById('zsub-'+s).textContent=`${don} passed • ${fai} need review`;
+    }
+  }
+}
+
+// ── Processing ───────────────────────────────────────────────
+async function processAll(s) {
+  const pb=document.getElementById('pb-'+s);
+  pb.disabled=true; pb.innerHTML='<span class="pod-spin me-1"></span> Processing...';
+  document.getElementById('zs-'+s).style.display='none';
+  S[s].results.forEach(r=>{r.status='waiting';r.filename=null;r.error='';});
+  S[s].blobs=S[s].files.map(()=>null);
+  renderList(s); updStats(s);
+
+  // Create batch record
+  const batchName=document.getElementById('batch-name-'+s).value.trim()||
+    (s==='dala'?'DALA Batch':'Brand Batch')+' '+new Date().toLocaleDateString('en-GB');
+  try {
+    const br=await fetch('/pod/batch/start',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:batchName,invoice_type:s})});
+    const bd=await br.json();
+    S[s].batchId=bd.batch_id;
+  } catch(e) { S[s].batchId=null; }
+
+  const queue=S[s].files.map((_,i)=>i);
+  await Promise.all(Array.from({length:CONCURRENCY},()=>worker(s,queue)));
+  updStats(s);
+}
+async function worker(s,q){while(q.length>0)await procFile(s,q.shift());}
+
+async function procFile(s,i) {
+  S[s].results[i].status='processing'; updItemUI(s,i); updStats(s);
+  try {
+    const f=S[s].files[i];
+    // Convert image to real PDF
+    const pdfBlob=await imgToPdf(f);
+
+    const fd=new FormData();
+    fd.append('file',f);
+    fd.append('invoice_type',s);
+    if(S[s].batchId) fd.append('batch_id',S[s].batchId);
+
+    const resp=await fetch('/pod/process',{method:'POST',body:fd});
+    const data=await resp.json();
+
+    if(!data.success) throw new Error(data.error||'Extraction failed');
+
+    S[s].results[i].status='done';
+    S[s].results[i].filename=data.filename;
+    S[s].blobs[i]=pdfBlob;
+  } catch(e) {
+    S[s].results[i].status='review';
+    S[s].results[i].error=e.message;
+  }
+  updItemUI(s,i); updStats(s);
+}
+
+// ── Image to PDF ─────────────────────────────────────────────
+async function imgToPdf(file) {
+  const origExt=file.name.split('.').pop().toLowerCase();
+  if(origExt==='pdf') return new Blob([await file.arrayBuffer()],{type:'application/pdf'});
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=function(e){
+      const img=new Image();
+      img.onload=function(){
+        try {
+          const {jsPDF}=window.jspdf;
+          const pxToMm=px=>px*25.4/96;
+          let w=pxToMm(img.width),h=pxToMm(img.height);
+          const maxW=210,maxH=297;
+          if(w>maxW){h=h*maxW/w;w=maxW;}
+          if(h>maxH){w=w*maxH/h;h=maxH;}
+          const pdf=new jsPDF({orientation:w>h?'l':'p',unit:'mm',format:[w,h]});
+          pdf.addImage(e.target.result,file.type==='image/png'?'PNG':'JPEG',0,0,w,h);
+          resolve(pdf.output('blob'));
+        } catch(err){reject(err);}
+      };
+      img.onerror=reject; img.src=e.target.result;
+    };
+    reader.onerror=reject; reader.readAsDataURL(file);
+  });
+}
+
+// ── Folder picker + save ─────────────────────────────────────
+async function pickFolder(s) {
+  try {
+    const handle=await window.showDirectoryPicker({mode:'readwrite'});
+    dirHandles[s]=handle;
+    document.getElementById('folder-label-'+s).textContent=handle.name;
+    document.getElementById('folder-btn-'+s).classList.add('folder-btn-selected');
+  } catch(e){if(e.name!=='AbortError')alert('Could not open folder: '+e.message);}
+}
+async function saveFiles(s) {
+  if(!dirHandles[s]){await pickFolder(s);if(!dirHandles[s])return;}
+  const btn=document.getElementById('save-btn-'+s);
+  btn.disabled=true; btn.innerHTML='<span class="pod-spin me-1"></span> Saving...';
+  try {
+    const nc={};let saved=0;
+    for(let i=0;i<S[s].results.length;i++){
+      const r=S[s].results[i]; const blob=S[s].blobs[i];
+      if(r.status!=='done'||!r.filename||!blob) continue;
+      let name=r.filename;
+      if(nc[name]!==undefined){nc[name]++;const pts=name.split('.');const ext=pts.pop();name=pts.join('.')+' ('+nc[name]+').'+ext;}
+      else nc[name]=0;
+      const fh=await dirHandles[s].getFileHandle(name,{create:true});
+      const wr=await fh.createWritable();
+      await wr.write(blob); await wr.close(); saved++;
+    }
+    document.getElementById('zsub-'+s).textContent=`${saved} files saved to "${dirHandles[s].name}"`;
+    btn.innerHTML='<i class="bi bi-check-circle me-1"></i> Saved!';
+    setTimeout(()=>{btn.disabled=false;btn.innerHTML='<i class="bi bi-download me-1"></i> Save Files';},3000);
+  } catch(e){alert('Save error: '+e.message);btn.disabled=false;btn.innerHTML='<i class="bi bi-download me-1"></i> Save Files';}
+}
+
+// ── Helpers ──────────────────────────────────────────────────
+function clearSec(s) {
+  S[s].files=[];S[s].results=[];S[s].blobs=[];S[s].batchId=null;
+  document.getElementById('fl-'+s).innerHTML='';
+  ['stats-','pw-','ar-'].forEach(p=>document.getElementById(p+s).style.display='none');
+  document.getElementById('zs-'+s).style.display='none';
+  document.getElementById('pf-'+s).style.width='0%';
+  const pb=document.getElementById('pb-'+s);
+  pb.disabled=false; pb.innerHTML='<i class="bi bi-play-fill me-1"></i> Process All';
+  document.getElementById('fi-'+s+'-folder').value='';
+  document.getElementById('fi-'+s+'-files').value='';
+}
+function show(id){const el=document.getElementById(id);el.style.removeProperty('display');el.style.display='flex';}
+function esc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+</script>
+{% endblock %}

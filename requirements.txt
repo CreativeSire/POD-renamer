@@ -1,0 +1,9 @@
+flask==3.0.3
+flask-login==0.6.3
+flask-bcrypt==1.0.1
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.36
+requests==2.32.3
+gunicorn==22.0.0
+python-dotenv==1.0.1
+werkzeug==3.0.6
