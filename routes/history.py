@@ -150,19 +150,3 @@ def delete_batch(batch_id):
         conn.commit()
     return jsonify({'success': True})
 
-
-# TEMP: Admin cleanup endpoints — remove after use
-@history_bp.route('/admin/clear-all', methods=['GET', 'POST'])
-def clear_all():
-    with get_db() as conn:
-        conn.execute(text("TRUNCATE TABLE logs, batches RESTART IDENTITY CASCADE"))
-        conn.commit()
-    return jsonify({'success': True, 'message': 'All history and logs cleared.'})
-
-
-@history_bp.route('/admin/demote-ewetu', methods=['GET', 'POST'])
-def demote_ewetu():
-    with get_db() as conn:
-        conn.execute(text("UPDATE users SET role = 'user' WHERE username = 'Ewetu01'"))
-        conn.commit()
-    return jsonify({'success': True, 'message': 'Ewetu demoted to user.'})
