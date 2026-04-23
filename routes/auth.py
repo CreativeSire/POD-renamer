@@ -12,8 +12,9 @@ def login():
         row = User.get_by_username(username)
         if row and User.verify_password(row['password_hash'], password):
             user = User(row['id'], row['username'], row['full_name'], row['role'])
-            login_user(user)
-            return redirect(url_for('dashboard.index'))
+            login_user(user, remember=True)
+            next_url = request.args.get('next')
+            return redirect(next_url or url_for('dashboard.index'))
         flash('Invalid username or password.', 'danger')
     return render_template('auth/login.html')
 

@@ -90,8 +90,11 @@ def init_db():
 
         conn.execute(text("""
             INSERT INTO users (username, full_name, password_hash, role)
-            SELECT :username, :full_name, :password_hash, 'admin'
-            WHERE NOT EXISTS (SELECT 1 FROM users WHERE username = :username)
+            VALUES (:username, :full_name, :password_hash, 'admin')
+            ON CONFLICT (username) DO UPDATE SET
+                full_name = EXCLUDED.full_name,
+                password_hash = EXCLUDED.password_hash,
+                role = 'admin'
         """), {
             'username': admin_username,
             'full_name': admin_full_name,

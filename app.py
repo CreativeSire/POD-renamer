@@ -1,4 +1,6 @@
 import os
+from datetime import timedelta
+
 from flask import Flask, jsonify, redirect, url_for
 from flask_login import LoginManager
 from dotenv import load_dotenv
@@ -12,6 +14,10 @@ def create_app():
     app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-change-in-production')
     app.config['COMPANY_NAME'] = 'DALA Technologies'
     app.config['MAX_CONTENT_LENGTH'] = int(os.environ.get('MAX_CONTENT_LENGTH', 25 * 1024 * 1024))
+    app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=365)
+    app.config['REMEMBER_COOKIE_SECURE'] = os.environ.get('FLASK_DEBUG', 'false').lower() != 'true'
+    app.config['REMEMBER_COOKIE_HTTPONLY'] = True
+    app.config['REMEMBER_COOKIE_SAMESITE'] = 'Lax'
 
     from database.schema import init_db
     init_db()
