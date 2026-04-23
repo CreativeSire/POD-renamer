@@ -38,6 +38,7 @@ In Railway → your service → Variables, add:
 | Variable | Value |
 |----------|-------|
 | `GEMINI_API_KEY` | Your Gemini API key from aistudio.google.com |
+| `GEMINI_MODEL` | Gemini model used for extraction, defaults to `gemini-2.5-flash` |
 | `SECRET_KEY` | Any long random string (e.g. `openssl rand -hex 32`) |
 | `ADMIN_USERNAME` | First admin login username, defaults to `admin` |
 | `ADMIN_PASSWORD` | First admin password. Set this before first deploy |

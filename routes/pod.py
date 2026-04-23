@@ -12,7 +12,8 @@ from database.schema import get_db
 
 pod_bp = Blueprint('pod', __name__)
 
-GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent'
+GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
+DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash'
 ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf'}
 
 BRAND_MAP = {
@@ -60,6 +61,7 @@ def call_gemini(file_bytes, mime_type, prompt):
     api_key = os.environ.get('GEMINI_API_KEY', '')
     if not api_key:
         raise ValueError('GEMINI_API_KEY is not configured.')
+    model = os.environ.get('GEMINI_MODEL', DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
 
     payload = {
         'contents': [{'parts': [
@@ -71,7 +73,7 @@ def call_gemini(file_bytes, mime_type, prompt):
         ]}],
         'generationConfig': {'temperature': 0, 'maxOutputTokens': 200},
     }
-    resp = requests.post(f'{GEMINI_URL}?key={api_key}', json=payload, timeout=45)
+    resp = requests.post(f'{GEMINI_API_BASE}/{model}:generateContent?key={api_key}', json=payload, timeout=45)
     resp.raise_for_status()
 
     text_out = resp.json()['candidates'][0]['content']['parts'][0]['text'].strip()
