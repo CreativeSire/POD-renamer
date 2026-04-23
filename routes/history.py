@@ -152,7 +152,7 @@ def delete_batch(batch_id):
 
 
 # TEMP: Admin cleanup endpoints — remove after use
-@history_bp.route('/admin/clear-all', methods=['POST'])
+@history_bp.route('/admin/clear-all', methods=['GET', 'POST'])
 @login_required
 def clear_all():
     with get_db() as conn:
@@ -161,7 +161,7 @@ def clear_all():
     return jsonify({'success': True, 'message': 'All history and logs cleared.'})
 
 
-@history_bp.route('/admin/demote-ewetu', methods=['POST'])
+@history_bp.route('/admin/demote-ewetu', methods=['GET', 'POST'])
 @login_required
 def demote_ewetu():
     with get_db() as conn:
