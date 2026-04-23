@@ -93,8 +93,7 @@ def init_db():
             VALUES (:username, :full_name, :password_hash, 'admin')
             ON CONFLICT (username) DO UPDATE SET
                 full_name = EXCLUDED.full_name,
-                password_hash = EXCLUDED.password_hash,
-                role = 'admin'
+                password_hash = EXCLUDED.password_hash
         """), {
             'username': admin_username,
             'full_name': admin_full_name,
