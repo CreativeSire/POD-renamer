@@ -3,6 +3,64 @@
 {% block page_title %}<i class="bi bi-clock-history me-2 text-primary"></i>History &amp; Logs{% endblock %}
 
 {% block content %}
+<style>
+  .folder-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: #e9ecef;
+    color: #495057;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .file-name {
+    font-weight: 500;
+    color: #1a1a2e;
+  }
+  .status-badge {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-weight: 600;
+  }
+  .status-passed { background: #d1f2d9; color: #1e7e34; }
+  .status-review { background: #fff3cd; color: #856404; }
+  .status-failed { background: #f8d7da; color: #721c24; }
+  .batch-item {
+    transition: background 0.15s;
+  }
+  .batch-item:hover {
+    background: #f8f9fa;
+  }
+  .batch-progress {
+    height: 4px;
+    border-radius: 2px;
+    background: #e9ecef;
+    overflow: hidden;
+    margin-top: 6px;
+  }
+  .batch-progress-bar {
+    height: 100%;
+    border-radius: 2px;
+    background: var(--accent);
+    transition: width 0.3s;
+  }
+  .log-row {
+    transition: background 0.15s;
+  }
+  .log-row:hover {
+    background: #f8f9fa !important;
+  }
+  .empty-state {
+    text-align: center;
+    padding: 48px 24px;
+    color: #adb5bd;
+  }
+  .empty-state i { font-size: 48px; margin-bottom: 12px; display: block; }
+</style>
+
 <!-- Filters -->
 <div class="card border-0 shadow-sm mb-4">
   <div class="card-body py-3">
@@ -36,15 +94,16 @@
   <!-- Log table -->
   <div class="col-12 col-lg-8">
     <div class="card border-0 shadow-sm">
-      <div class="card-header bg-white border-bottom d-flex justify-content-between align-items-center">
+      <div class="card-header bg-white border-bottom d-flex justify-content-between align-items-center py-3">
         <span class="fw-bold"><i class="bi bi-list-ul me-2 text-primary"></i>File Logs <span class="text-muted fw-normal small">({{ total }} total)</span></span>
       </div>
       <div class="card-body p-0">
         {% if logs %}
         <div class="table-responsive">
-          <table class="table table-hover small mb-0">
+          <table class="table table-hover mb-0">
             <thead class="table-light">
               <tr>
+                <th class="ps-4">Original File</th>
                 <th>Renamed To</th>
                 <th>Store</th>
                 <th>Type</th>
@@ -55,12 +114,19 @@
             </thead>
             <tbody>
               {% for log in logs %}
-              <tr>
-                <td>
-                  <div class="fw-semibold" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ log.renamed_to }}">
-                    {{ log.renamed_to or '—' }}
+              <tr class="log-row">
+                <td class="ps-4">
+                  {% if log.folder %}
+                    <div class="folder-tag mb-1"><i class="bi bi-folder"></i> {{ log.folder }}</div>
+                  {% endif %}
+                  <div class="file-name" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ log.filename }}">
+                    {{ log.filename }}
                   </div>
-                  <div class="text-muted" style="font-size:10px;">{{ log.original_name }}</div>
+                </td>
+                <td>
+                  <div style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ log.renamed_to }}">
+                    <span class="fw-semibold text-dark">{{ log.renamed_to or '—' }}</span>
+                  </div>
                 </td>
                 <td>{{ log.store_name or '—' }}</td>
                 <td>
@@ -70,9 +136,13 @@
                 </td>
                 <td>
                   {% if log.status == 'passed' %}
-                    <span class="badge bg-success">Passed</span>
+                    <span class="status-badge status-passed"><i class="bi bi-check-circle-fill me-1"></i>Passed</span>
+                  {% elif log.status == 'review' %}
+                    <span class="status-badge status-review" title="{{ log.error_message or '' }}">
+                      <i class="bi bi-exclamation-triangle-fill me-1"></i>Review
+                    </span>
                   {% else %}
-                    <span class="badge bg-warning text-dark" title="{{ log.error_message }}">Review</span>
+                    <span class="status-badge status-failed"><i class="bi bi-x-circle-fill me-1"></i>Failed</span>
                   {% endif %}
                 </td>
                 <td class="text-muted small">{{ log.batch_name or '—' }}</td>
@@ -94,8 +164,10 @@
         {% endif %}
 
         {% else %}
-        <div class="text-center py-5 text-muted">
-          <i class="bi bi-inbox fs-2 d-block mb-2"></i>No logs found.
+        <div class="empty-state">
+          <i class="bi bi-inbox"></i>
+          <div class="fw-semibold">No logs found</div>
+          <div class="small">Try adjusting your filters or process some files first.</div>
         </div>
         {% endif %}
       </div>
@@ -105,27 +177,38 @@
   <!-- Batch list -->
   <div class="col-12 col-lg-4">
     <div class="card border-0 shadow-sm">
-      <div class="card-header bg-white border-bottom fw-bold">
+      <div class="card-header bg-white border-bottom fw-bold py-3">
         <i class="bi bi-collection me-2 text-primary"></i>Batches
       </div>
       <div class="card-body p-0">
         {% if batches %}
-        <div style="max-height:520px;overflow-y:auto;">
+        <div style="max-height:600px;overflow-y:auto;">
           {% for b in batches %}
-          <a href="{{ url_for('history.batch_detail', batch_id=b.id) }}" class="d-block text-decoration-none">
-            <div class="d-flex align-items-center gap-2 px-3 py-2 border-bottom hover-bg">
+          <a href="{{ url_for('history.batch_detail', batch_id=b.id) }}" class="d-block text-decoration-none batch-item border-bottom">
+            <div class="d-flex align-items-center gap-2 px-3 py-3">
               <span class="badge {% if b.invoice_type == 'dala' %}bg-primary{% else %}bg-danger{% endif %} flex-shrink-0">{{ b.invoice_type|upper }}</span>
               <div class="flex-grow-1 min-w-0">
                 <div class="fw-semibold small text-dark" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ b.name }}</div>
-                <div class="text-muted" style="font-size:10px;">{{ b.total_files }} files · {{ b.passed }} passed · {{ b.review }} review</div>
+                <div class="d-flex gap-2 mt-1">
+                  <span class="text-muted" style="font-size:11px;">{{ b.total_files }} files</span>
+                  <span class="text-success" style="font-size:11px;">{{ b.passed }} passed</span>
+                  <span class="text-warning" style="font-size:11px;">{{ b.review }} review</span>
+                </div>
+                <div class="batch-progress">
+                  <div class="batch-progress-bar" style="width: {{ (b.passed / b.total_files * 100) if b.total_files else 0 }}%"></div>
+                </div>
               </div>
-              <div class="text-muted text-nowrap" style="font-size:10px;">{{ b.created_at.strftime('%d %b') if b.created_at else '' }}</div>
+              <div class="text-muted text-nowrap" style="font-size:11px;">{{ b.created_at.strftime('%d %b') if b.created_at else '' }}</div>
             </div>
           </a>
           {% endfor %}
         </div>
         {% else %}
-        <p class="text-muted text-center py-4 small">No batches yet</p>
+        <div class="empty-state">
+          <i class="bi bi-collection"></i>
+          <div class="fw-semibold">No batches yet</div>
+          <div class="small">Process some PODs to see them here.</div>
+        </div>
         {% endif %}
       </div>
     </div>

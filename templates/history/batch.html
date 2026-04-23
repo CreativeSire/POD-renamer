@@ -9,38 +9,115 @@
 {% endblock %}
 
 {% block content %}
+<style>
+  .stat-card {
+    border: 1px solid #e9ecef;
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+    background: white;
+    transition: all 0.2s;
+    cursor: pointer;
+    text-decoration: none;
+    color: inherit;
+    display: block;
+  }
+  .stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  }
+  .stat-card.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+  .stat-card .stat-num {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .stat-card .stat-label {
+    font-size: 12px;
+    color: #6c757d;
+    margin-top: 6px;
+    font-weight: 500;
+  }
+  .folder-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: #e9ecef;
+    color: #495057;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .file-row {
+    transition: background 0.15s;
+  }
+  .file-row:hover {
+    background: #f8f9fa !important;
+  }
+  .file-name {
+    font-weight: 500;
+    color: #1a1a2e;
+  }
+  .file-name small {
+    color: #6c757d;
+    font-weight: 400;
+  }
+  .status-badge {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-weight: 600;
+  }
+  .status-passed { background: #d1f2d9; color: #1e7e34; }
+  .status-review { background: #fff3cd; color: #856404; }
+  .status-failed { background: #f8d7da; color: #721c24; }
+  .empty-state {
+    text-align: center;
+    padding: 48px 24px;
+    color: #adb5bd;
+  }
+  .empty-state i { font-size: 48px; margin-bottom: 12px; display: block; }
+</style>
+
 <!-- Batch summary -->
 <div class="row g-3 mb-4">
   <div class="col-6 col-md-3">
-    <div class="card border-0 shadow-sm text-center py-3">
-      <div class="fs-2 fw-bold text-primary">{{ batch.total_files }}</div>
-      <div class="text-muted small">Total Files</div>
-    </div>
+    <a href="{{ url_for('history.batch_detail', batch_id=batch.id) }}" 
+       class="stat-card {{ 'active' if not active_status else '' }}">
+      <div class="stat-num text-primary">{{ batch.total_files }}</div>
+      <div class="stat-label">All Files</div>
+    </a>
   </div>
   <div class="col-6 col-md-3">
-    <div class="card border-0 shadow-sm text-center py-3">
-      <div class="fs-2 fw-bold text-success">{{ batch.passed }}</div>
-      <div class="text-muted small">Passed</div>
-    </div>
+    <a href="{{ url_for('history.batch_detail', batch_id=batch.id, status='passed') }}" 
+       class="stat-card {{ 'active' if active_status == 'passed' else '' }}">
+      <div class="stat-num text-success">{{ counts.get('passed', 0) }}</div>
+      <div class="stat-label">Passed</div>
+    </a>
   </div>
   <div class="col-6 col-md-3">
-    <div class="card border-0 shadow-sm text-center py-3">
-      <div class="fs-2 fw-bold text-warning">{{ batch.review }}</div>
-      <div class="text-muted small">Needs Review</div>
-    </div>
+    <a href="{{ url_for('history.batch_detail', batch_id=batch.id, status='review') }}" 
+       class="stat-card {{ 'active' if active_status == 'review' else '' }}">
+      <div class="stat-num text-warning">{{ counts.get('review', 0) }}</div>
+      <div class="stat-label">Needs Review</div>
+    </a>
   </div>
   <div class="col-6 col-md-3">
-    <div class="card border-0 shadow-sm text-center py-3">
-      <div class="fs-4 fw-bold text-info">
+    <div class="stat-card" style="cursor: default;">
+      <div class="stat-num">
         <span class="badge {% if batch.invoice_type == 'dala' %}bg-primary{% else %}bg-danger{% endif %} fs-6">{{ batch.invoice_type|upper }}</span>
       </div>
-      <div class="text-muted small mt-1">Type</div>
+      <div class="stat-label">Type</div>
     </div>
   </div>
 </div>
 
 <div class="card border-0 shadow-sm">
-  <div class="card-header bg-white border-bottom d-flex justify-content-between align-items-center">
+  <div class="card-header bg-white border-bottom d-flex justify-content-between align-items-center py-3">
     <span class="fw-bold"><i class="bi bi-list-ul me-2 text-primary"></i>File Log</span>
     <div class="text-muted small">
       Processed by {{ batch.processed_by }} ·
@@ -48,14 +125,16 @@
     </div>
   </div>
   <div class="card-body p-0">
+    {% if logs %}
     <div class="table-responsive">
-      <table class="table table-hover small mb-0">
+      <table class="table table-hover mb-0">
         <thead class="table-light">
           <tr>
-            <th>#</th>
-            <th>Original Filename</th>
+            <th class="ps-4">#</th>
+            <th>Original File</th>
             <th>Renamed To</th>
             <th>Store</th>
+            <th>Location</th>
             <th>Invoice</th>
             <th>Date</th>
             <th>Status</th>
@@ -63,22 +142,34 @@
         </thead>
         <tbody>
           {% for log in logs %}
-          <tr class="{% if log.status == 'review' %}table-warning{% endif %}">
-            <td class="text-muted">{{ loop.index }}</td>
-            <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ log.original_name }}">{{ log.original_name }}</td>
-            <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ log.renamed_to }}">
-              <span class="fw-semibold">{{ log.renamed_to or '—' }}</span>
+          <tr class="file-row {{ 'table-warning' if log.status == 'review' else '' }}">
+            <td class="text-muted ps-4">{{ loop.index }}</td>
+            <td>
+              {% if log.folder %}
+                <div class="folder-tag mb-1"><i class="bi bi-folder"></i> {{ log.folder }}</div>
+              {% endif %}
+              <div class="file-name" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ log.filename }}">
+                {{ log.filename }}
+              </div>
+            </td>
+            <td>
+              <div style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ log.renamed_to }}">
+                <span class="fw-semibold text-dark">{{ log.renamed_to or '—' }}</span>
+              </div>
             </td>
             <td>{{ log.store_name or '—' }}</td>
+            <td>{{ log.location or '—' }}</td>
             <td>{{ log.invoice_number or '—' }}</td>
             <td class="text-nowrap">{{ log.invoice_date or '—' }}</td>
             <td>
               {% if log.status == 'passed' %}
-                <span class="badge bg-success">Passed</span>
-              {% else %}
-                <span class="badge bg-warning text-dark" title="{{ log.error_message or '' }}">
-                  Review {% if log.error_message %}<i class="bi bi-info-circle"></i>{% endif %}
+                <span class="status-badge status-passed"><i class="bi bi-check-circle-fill me-1"></i>Passed</span>
+              {% elif log.status == 'review' %}
+                <span class="status-badge status-review" title="{{ log.error_message or '' }}">
+                  <i class="bi bi-exclamation-triangle-fill me-1"></i>Review
                 </span>
+              {% else %}
+                <span class="status-badge status-failed"><i class="bi bi-x-circle-fill me-1"></i>Failed</span>
               {% endif %}
             </td>
           </tr>
@@ -86,6 +177,13 @@
         </tbody>
       </table>
     </div>
+    {% else %}
+    <div class="empty-state">
+      <i class="bi bi-inbox"></i>
+      <div class="fw-semibold">No files found</div>
+      <div class="small">Try selecting a different status filter above.</div>
+    </div>
+    {% endif %}
   </div>
 </div>
 {% endblock %}
