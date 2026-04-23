@@ -196,7 +196,7 @@ input[type=file] { display:none; }
 
 {% block scripts %}
 <script>
-const CONCURRENCY = 4;
+const CONCURRENCY = 1;
 const S = {
   dala:  { files:[], results:[], blobs:[], batchId:null, folder:'DALA_Renamed' },
   brand: { files:[], results:[], blobs:[], batchId:null, folder:'Brand_Renamed' }
@@ -234,7 +234,7 @@ function ingest(s,arr) {
   show('stats-'+s); show('ar-'+s);
   document.getElementById('pw-'+s).style.display='block';
   document.getElementById('pl-'+s).style.display='block';
-  document.getElementById('zs-'+s).style.display='none';
+  document.getElementById('zs-'+s).style.cssText='display:none!important;';
 }
 
 // ── Render ───────────────────────────────────────────────────
@@ -277,6 +277,8 @@ function updStats(s) {
     if(don>0){
       document.getElementById('zs-'+s).style.cssText='display:flex!important;';
       document.getElementById('zsub-'+s).textContent=`${don} passed • ${fai} need review`;
+    } else {
+      document.getElementById('zs-'+s).style.cssText='display:none!important;';
     }
   }
 }
@@ -285,7 +287,7 @@ function updStats(s) {
 async function processAll(s) {
   const pb=document.getElementById('pb-'+s);
   pb.disabled=true; pb.innerHTML='<span class="pod-spin me-1"></span> Processing...';
-  document.getElementById('zs-'+s).style.display='none';
+  document.getElementById('zs-'+s).style.cssText='display:none!important;';
   S[s].results.forEach(r=>{r.status='waiting';r.filename=null;r.error='';});
   S[s].blobs=S[s].files.map(()=>null);
   renderList(s); updStats(s);
@@ -396,7 +398,7 @@ function clearSec(s) {
   S[s].files=[];S[s].results=[];S[s].blobs=[];S[s].batchId=null;
   document.getElementById('fl-'+s).innerHTML='';
   ['stats-','pw-','ar-'].forEach(p=>document.getElementById(p+s).style.display='none');
-  document.getElementById('zs-'+s).style.display='none';
+  document.getElementById('zs-'+s).style.cssText='display:none!important;';
   document.getElementById('pf-'+s).style.width='0%';
   const pb=document.getElementById('pb-'+s);
   pb.disabled=false; pb.innerHTML='<i class="bi bi-play-fill me-1"></i> Process All';

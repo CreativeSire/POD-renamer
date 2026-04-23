@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import re
+import time
 
 import requests
 from flask import Blueprint, jsonify, render_template, request
@@ -14,6 +15,7 @@ pod_bp = Blueprint('pod', __name__)
 
 GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
 DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash'
+DEFAULT_GEMINI_FALLBACK_MODELS = 'gemini-2.5-flash,gemini-flash-latest'
 ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf'}
 
 BRAND_MAP = {
@@ -61,7 +63,13 @@ def call_gemini(file_bytes, mime_type, prompt):
     api_key = os.environ.get('GEMINI_API_KEY', '')
     if not api_key:
         raise ValueError('GEMINI_API_KEY is not configured.')
-    model = os.environ.get('GEMINI_MODEL', DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
+    configured_models = os.environ.get(
+        'GEMINI_MODEL_FALLBACKS',
+        os.environ.get('GEMINI_MODEL', DEFAULT_GEMINI_FALLBACK_MODELS),
+    )
+    models = [m.strip() for m in configured_models.split(',') if m.strip()]
+    if not models:
+        models = [DEFAULT_GEMINI_MODEL]
 
     payload = {
         'contents': [{'parts': [
@@ -71,11 +79,38 @@ def call_gemini(file_bytes, mime_type, prompt):
             }},
             {'text': prompt},
         ]}],
-        'generationConfig': {'temperature': 0, 'maxOutputTokens': 200},
+        'generationConfig': {
+            'temperature': 0,
+            'maxOutputTokens': 300,
+            'responseMimeType': 'application/json',
+        },
     }
-    resp = requests.post(f'{GEMINI_API_BASE}/{model}:generateContent?key={api_key}', json=payload, timeout=45)
-    resp.raise_for_status()
 
+    last_error = None
+    for model in models:
+        for attempt in range(2):
+            try:
+                resp = requests.post(
+                    f'{GEMINI_API_BASE}/{model}:generateContent?key={api_key}',
+                    json=payload,
+                    timeout=70,
+                )
+                resp.raise_for_status()
+                return parse_gemini_response(resp)
+            except requests.HTTPError as exc:
+                status_code = exc.response.status_code if exc.response is not None else None
+                last_error = exc
+                if status_code not in {429, 500, 502, 503, 504}:
+                    raise ValueError(f'Gemini request failed with status {status_code}.')
+            except (requests.Timeout, requests.ConnectionError) as exc:
+                last_error = exc
+
+            time.sleep(1.5 * (attempt + 1))
+
+    raise ValueError('Gemini is temporarily unavailable. Please retry this file.')
+
+
+def parse_gemini_response(resp):
     text_out = resp.json()['candidates'][0]['content']['parts'][0]['text'].strip()
     text_out = re.sub(r'```json|```', '', text_out).strip()
 
@@ -85,7 +120,7 @@ def call_gemini(file_bytes, mime_type, prompt):
         match = re.search(r'\{[\s\S]*\}', text_out)
         if match:
             return json.loads(match.group())
-        raise ValueError(f'Could not parse AI response: {text_out}')
+        raise ValueError('AI returned an unreadable response. Please review this file.')
 
 
 @pod_bp.route('/pod')
