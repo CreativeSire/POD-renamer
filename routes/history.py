@@ -100,3 +100,12 @@ def delete_batch(batch_id):
         conn.execute(text("DELETE FROM batches WHERE id = :id"), {'id': batch_id})
         conn.commit()
     return jsonify({'success': True})
+
+
+@history_bp.route('/admin/clear-all', methods=['POST'])
+@login_required
+def clear_all():
+    with get_db() as conn:
+        conn.execute(text("TRUNCATE TABLE logs, batches RESTART IDENTITY CASCADE"))
+        conn.commit()
+    return jsonify({'success': True, 'message': 'All history and logs cleared.'})
