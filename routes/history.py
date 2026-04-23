@@ -153,7 +153,6 @@ def delete_batch(batch_id):
 
 # TEMP: Admin cleanup endpoints — remove after use
 @history_bp.route('/admin/clear-all', methods=['GET', 'POST'])
-@login_required
 def clear_all():
     with get_db() as conn:
         conn.execute(text("TRUNCATE TABLE logs, batches RESTART IDENTITY CASCADE"))
@@ -162,7 +161,6 @@ def clear_all():
 
 
 @history_bp.route('/admin/demote-ewetu', methods=['GET', 'POST'])
-@login_required
 def demote_ewetu():
     with get_db() as conn:
         conn.execute(text("UPDATE users SET role = 'user' WHERE username = 'Ewetu01'"))
