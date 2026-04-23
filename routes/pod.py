@@ -41,7 +41,7 @@ Extract exactly these 4 fields:
 1. supermarket: Store/customer name. On printed invoices follows "Party :". Examples: "Supersaver", "Jendol Supermarket"
 2. location: Delivery area - 1-2 words only, NOT full address. Examples: "Osapa", "Ikeja", "Egbeda", "Alakuko"
 3. invoice: Invoice number digits only - strip N0-, NO-, DT- prefixes. From "N0-035263" return "035263"
-4. date: Delivery date as DD-MM-YYYY. Look for "Dated". e.g. "26-02-2026"
+4. date: Delivery date as DD-MM-YYYY from the printed top-right "Dated" field. Ignore received stamps, signatures, or handwritten dates. Example: "26-02-2026"
 
 Return ONLY raw JSON, never leave a field empty, location 1-2 words max:
 {"supermarket":"...","location":"...","invoice":"...","date":"..."}"""
@@ -53,7 +53,7 @@ Extract exactly these 5 fields:
 2. supermarket: Store/customer that received delivery. Look for "NAME:" or handwritten store name.
 3. location: Delivery area - 1-2 words only. Look at ADDRESS or near store name.
 4. invoice: Invoice/receipt number - digits only, strip any prefixes. e.g. "06081"
-5. date: Date as DDMMYY (6 digits). e.g. 25 Feb 2026 = "250226"
+5. date: Date as DDMMYY (6 digits) from the printed top-right invoice date. Ignore received stamps, signatures, or handwritten dates. e.g. 25 Feb 2026 = "250226"
 
 Return ONLY raw JSON, never leave a field empty, location 1-2 words max:
 {"brand":"...","supermarket":"...","location":"...","invoice":"...","date":"..."}"""
@@ -108,8 +108,9 @@ def call_gemini(file_bytes, mime_type, prompt):
         ]}],
         'generationConfig': {
             'temperature': 0,
-            'maxOutputTokens': 300,
+            'maxOutputTokens': 800,
             'responseMimeType': 'application/json',
+            'thinkingConfig': {'thinkingBudget': 0},
         },
     }
 
@@ -132,6 +133,8 @@ def call_gemini(file_bytes, mime_type, prompt):
                     raise ValueError(f'Gemini rejected this file ({status_code}): {detail}')
             except (requests.Timeout, requests.ConnectionError) as exc:
                 last_error = exc
+            except ValueError as exc:
+                last_error = exc
 
             time.sleep(1.5 * (attempt + 1))
 
@@ -142,7 +145,14 @@ def call_gemini(file_bytes, mime_type, prompt):
 
 
 def parse_gemini_response(resp):
-    text_out = resp.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+    data = resp.json()
+    candidate = data.get('candidates', [{}])[0]
+    parts = candidate.get('content', {}).get('parts', [])
+    if not parts:
+        finish_reason = candidate.get('finishReason', 'UNKNOWN')
+        raise ValueError(f'AI response was incomplete ({finish_reason}).')
+
+    text_out = parts[0]['text'].strip()
     text_out = re.sub(r'```json|```', '', text_out).strip()
 
     try:
@@ -152,6 +162,42 @@ def parse_gemini_response(resp):
         if match:
             return json.loads(match.group())
         raise ValueError('AI returned an unreadable response. Please review this file.')
+
+
+def normalize_date(date_text, invoice_type):
+    value = clean(date_text)
+    if not value:
+        return value
+
+    if invoice_type == 'brand':
+        compact = re.sub(r'[^0-9]', '', value)
+        if len(compact) == 6:
+            return compact
+
+    months = {
+        'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04', 'may': '05', 'jun': '06',
+        'jul': '07', 'aug': '08', 'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12',
+    }
+
+    match = re.match(r'(?i)^\s*(\d{1,2})[-/\s]([A-Za-z]{3,})[-/\s](\d{2,4})\s*$', value)
+    if match:
+        day, month_name, year = match.groups()
+        month = months.get(month_name[:3].lower())
+        if month:
+            year = f'20{year}' if len(year) == 2 else year
+            return f'{int(day):02d}-{month}-{year}'
+
+    match = re.match(r'^\s*(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})\s*$', value)
+    if match:
+        day, month, year = match.groups()
+        year = f'20{year}' if len(year) == 2 else year
+        return f'{int(day):02d}-{int(month):02d}-{year}'
+
+    compact = re.sub(r'[^0-9]', '', value)
+    if invoice_type == 'dala' and len(compact) == 8:
+        return f'{compact[:2]}-{compact[2:4]}-{compact[4:]}'
+
+    return value
 
 
 @pod_bp.route('/pod')
@@ -213,7 +259,7 @@ def process():
             clean(parsed.get('invoice', '')),
             flags=re.IGNORECASE,
         ).strip()
-        date = clean(parsed.get('date', ''))
+        date = normalize_date(parsed.get('date', ''), invoice_type)
 
         if not store or not loc or not inv:
             raise ValueError(f'Incomplete data: {parsed}')
