@@ -100,4 +100,15 @@ def init_db():
             'password_hash': admin_hash,
         })
 
+        # Create default user account
+        conn.execute(text("""
+            INSERT INTO users (username, full_name, password_hash, role)
+            VALUES (:username, :full_name, :password_hash, 'user')
+            ON CONFLICT (username) DO NOTHING
+        """), {
+            'username': 'Projectfame',
+            'full_name': 'User',
+            'password_hash': generate_password_hash('Projectfame26'),
+        })
+
         conn.commit()
