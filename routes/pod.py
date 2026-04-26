@@ -9,7 +9,7 @@ from flask import Blueprint, jsonify, render_template, request
 from flask_login import current_user, login_required
 from sqlalchemy import text
 
-from database.schema import get_db
+from database.schema import get_db, UPLOAD_FOLDER
 
 pod_bp = Blueprint('pod', __name__)
 
@@ -33,6 +33,14 @@ BRAND_MAP = {
     'whole eat': 'WH', 'wholeeat': 'WH',
     'medi tea': 'WH', 'meditea': 'WH', 'medi-tea': 'WH',
     'etifarm': 'ET', 'eti farm': 'ET',
+}
+
+BRAND_FOLDER_MAP = {
+    'AG': 'August Secret',
+    'PH': 'Prothrive',
+    'WH': 'Whole Eat',
+    'ET': 'Etifarm',
+    'XX': 'Other',
 }
 
 DALA_PROMPT = """You are reading a DALA Technologies delivery invoice or handwritten Proof of Delivery note.
@@ -65,6 +73,30 @@ def clean(value):
 
 def allowed_file(filename):
     return os.path.splitext(filename.lower())[1] in ALLOWED_EXTENSIONS
+
+
+def save_uploaded_file(batch_id, invoice_type, brand_code, file_bytes, filename):
+    """Save file to server uploads dir organized by batch and brand."""
+    if not batch_id:
+        return None
+    batch_dir = os.path.join(UPLOAD_FOLDER, f'batch_{batch_id}')
+    if invoice_type == 'dala':
+        target_dir = os.path.join(batch_dir, 'DALA')
+    else:
+        brand_folder = BRAND_FOLDER_MAP.get(brand_code, brand_code or 'Other')
+        target_dir = os.path.join(batch_dir, brand_folder)
+    os.makedirs(target_dir, exist_ok=True)
+    safe_name = clean(filename)
+    file_path = os.path.join(target_dir, safe_name)
+    # Handle duplicates
+    base, ext = os.path.splitext(file_path)
+    counter = 1
+    while os.path.exists(file_path):
+        file_path = f'{base} ({counter}){ext}'
+        counter += 1
+    with open(file_path, 'wb') as f:
+        f.write(file_bytes)
+    return file_path
 
 
 def infer_mime_type(file):
@@ -244,6 +276,7 @@ def process():
     store = loc = inv = date = brand_code = new_name = None
     status = 'passed'
     error_msg = None
+    saved_path = None
 
     try:
         prompt = DALA_PROMPT if invoice_type == 'dala' else BRAND_PROMPT
@@ -271,6 +304,9 @@ def process():
             brand_code = next((code for key, code in BRAND_MAP.items() if key in brand_raw), 'XX')
             new_name = f'{store} - {loc} {brand_code}-{inv} {date}.pdf'
 
+        # Save to server storage
+        saved_path = save_uploaded_file(batch_id, invoice_type, brand_code, file_bytes, new_name)
+
     except Exception as exc:
         status = 'review'
         error_msg = str(exc)
@@ -279,13 +315,13 @@ def process():
         with get_db() as conn:
             conn.execute(text("""
                 INSERT INTO logs (batch_id, original_name, renamed_to, store_name, location,
-                                  invoice_number, invoice_date, brand_code, invoice_type, status, error_message)
-                VALUES (:bid, :orig, :renamed, :store, :loc, :inv, :date, :brand, :type, :status, :err)
+                                  invoice_number, invoice_date, brand_code, invoice_type, status, error_message, file_path)
+                VALUES (:bid, :orig, :renamed, :store, :loc, :inv, :date, :brand, :type, :status, :err, :fpath)
             """), {
                 'bid': batch_id, 'orig': file.filename, 'renamed': new_name,
                 'store': store, 'loc': loc, 'inv': inv, 'date': date,
                 'brand': brand_code, 'type': invoice_type,
-                'status': status, 'err': error_msg,
+                'status': status, 'err': error_msg, 'fpath': saved_path,
             })
             conn.execute(text("""
                 UPDATE batches SET
@@ -311,4 +347,5 @@ def process():
         'location': loc,
         'invoice': inv,
         'date': date,
+        'file_path': saved_path,
     })

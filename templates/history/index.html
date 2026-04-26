@@ -110,6 +110,7 @@
                 <th>Status</th>
                 <th>Batch</th>
                 <th>Date</th>
+                <th>File</th>
               </tr>
             </thead>
             <tbody>
@@ -147,6 +148,15 @@
                 </td>
                 <td class="text-muted small">{{ log.batch_name or '—' }}</td>
                 <td class="text-muted small text-nowrap">{{ log.created_at.strftime('%d %b %y %H:%M') if log.created_at else '' }}</td>
+                <td>
+                  {% if log.file_path %}
+                    <a href="{{ url_for('files.download_file', log_id=log.id) }}" class="btn btn-outline-primary btn-sm py-0 px-1" title="Download">
+                      <i class="bi bi-download"></i>
+                    </a>
+                  {% else %}
+                    <span class="text-muted small">—</span>
+                  {% endif %}
+                </td>
               </tr>
               {% endfor %}
             </tbody>

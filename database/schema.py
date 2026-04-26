@@ -7,6 +7,9 @@ from werkzeug.security import generate_password_hash
 
 _engine = None
 
+UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'uploads')
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
 
 def get_database_url():
     url = os.environ.get('DATABASE_URL', '').strip()
@@ -74,6 +77,7 @@ def init_db():
                 invoice_type VARCHAR(10) NOT NULL,
                 status VARCHAR(20) DEFAULT 'passed',
                 error_message TEXT,
+                file_path VARCHAR(1000),
                 created_at TIMESTAMP DEFAULT NOW()
             )
         """))

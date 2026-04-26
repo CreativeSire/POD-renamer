@@ -85,6 +85,10 @@
        class="nav-item {% if 'history' in request.endpoint %}active{% endif %}">
       <i class="bi bi-clock-history"></i> History &amp; Logs
     </a>
+    <a href="{{ url_for('files.browser') }}"
+       class="nav-item {% if 'files' in request.endpoint %}active{% endif %}">
+      <i class="bi bi-folder"></i> Files &amp; Storage
+    </a>
   </nav>
   <div class="sidebar-footer">
     <div class="user-avatar">{{ current_user.full_name[0]|upper }}</div>

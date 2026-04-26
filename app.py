@@ -39,11 +39,13 @@ def create_app():
     from routes.dashboard import dashboard_bp
     from routes.pod import pod_bp
     from routes.history import history_bp
+    from routes.files import files_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(pod_bp)
     app.register_blueprint(history_bp)
+    app.register_blueprint(files_bp)
 
     @app.route('/')
     def index():

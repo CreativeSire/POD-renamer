@@ -107,12 +107,10 @@
     </a>
   </div>
   <div class="col-6 col-md-3">
-    <div class="stat-card" style="cursor: default;">
-      <div class="stat-num">
-        <span class="badge {% if batch.invoice_type == 'dala' %}bg-primary{% else %}bg-danger{% endif %} fs-6">{{ batch.invoice_type|upper }}</span>
-      </div>
-      <div class="stat-label">Type</div>
-    </div>
+    <a href="{{ url_for('files.download_batch_zip', batch_id=batch.id) }}" class="stat-card">
+      <div class="stat-num text-info"><i class="bi bi-download"></i></div>
+      <div class="stat-label">Download All</div>
+    </a>
   </div>
 </div>
 
@@ -138,6 +136,7 @@
             <th>Invoice</th>
             <th>Date</th>
             <th>Status</th>
+            <th>File</th>
           </tr>
         </thead>
         <tbody>
@@ -170,6 +169,15 @@
                 </span>
               {% else %}
                 <span class="status-badge status-failed"><i class="bi bi-x-circle-fill me-1"></i>Failed</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if log.file_path %}
+                <a href="{{ url_for('files.download_file', log_id=log.id) }}" class="btn btn-outline-primary btn-sm" title="Download">
+                  <i class="bi bi-download"></i>
+                </a>
+              {% else %}
+                <span class="text-muted small">—</span>
               {% endif %}
             </td>
           </tr>

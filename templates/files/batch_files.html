@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Files: {{ batch.name }}{% endblock %}
+{% block page_title %}<i class="bi bi-folder me-2 text-primary"></i>{{ batch.name }}{% endblock %}
+
+{% block topbar_actions %}
+<a href="{{ url_for('files.browser') }}" class="btn btn-outline-secondary btn-sm me-2">
+  <i class="bi bi-arrow-left me-1"></i> Back
+</a>
+<a href="{{ url_for('files.download_batch_zip', batch_id=batch.id) }}" class="btn btn-primary btn-sm">
+  <i class="bi bi-download me-1"></i> Download All
+</a>
+{% endblock %}
+
+{% block content %}
+<style>
+  .folder-section {
+    border: 1px solid #e9ecef;
+    border-radius: 12px;
+    background: white;
+    margin-bottom: 20px;
+    overflow: hidden;
+  }
+  .folder-header {
+    background: #f8f9fa;
+    padding: 12px 20px;
+    font-weight: 600;
+    border-bottom: 1px solid #e9ecef;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .file-item {
+    padding: 10px 20px;
+    border-bottom: 1px solid #f1f3f5;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    transition: background 0.15s;
+  }
+  .file-item:hover {
+    background: #f8f9fa;
+  }
+  .file-item:last-child {
+    border-bottom: none;
+  }
+  .file-name {
+    font-weight: 500;
+    color: #1a1a2e;
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .file-original {
+    font-size: 11px;
+    color: #adb5bd;
+  }
+  .empty-state {
+    text-align: center;
+    padding: 48px 24px;
+    color: #adb5bd;
+  }
+  .empty-state i { font-size: 48px; margin-bottom: 12px; display: block; }
+</style>
+
+{% if folders %}
+  {% for folder_name, files in folders.items() %}
+  <div class="folder-section">
+    <div class="folder-header">
+      <i class="bi bi-folder-fill text-warning"></i>
+      {{ folder_name }}
+      <span class="text-muted small ms-auto">{{ files|length }} file{{ 's' if files|length != 1 else '' }}</span>
+    </div>
+    {% for f in files %}
+    <div class="file-item">
+      <i class="bi bi-file-earmark-pdf text-danger fs-5"></i>
+      <div class="flex-grow-1 min-w-0">
+        <div class="file-name" title="{{ f.renamed_to or 'Untitled' }}">{{ f.renamed_to or 'Untitled' }}</div>
+        <div class="file-original">{{ f.original_name }}</div>
+      </div>
+      <a href="{{ url_for('files.download_file', log_id=f.id) }}" class="btn btn-outline-primary btn-sm">
+        <i class="bi bi-download"></i>
+      </a>
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+{% else %}
+<div class="empty-state">
+  <i class="bi bi-inbox"></i>
+  <div class="fw-semibold">No stored files in this batch</div>
+  <div class="small">Files are only stored for successfully processed items.</div>
+</div>
+{% endif %}
+{% endblock %}

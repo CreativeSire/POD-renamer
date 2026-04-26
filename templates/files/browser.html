@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Files & Storage{% endblock %}
+{% block page_title %}<i class="bi bi-folder me-2 text-primary"></i>Files &amp; Storage{% endblock %}
+
+{% block content %}
+<style>
+  .batch-card {
+    border: 1px solid #e9ecef;
+    border-radius: 12px;
+    padding: 20px;
+    background: white;
+    transition: all 0.2s;
+    text-decoration: none;
+    color: inherit;
+    display: block;
+  }
+  .batch-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    border-color: #4f46e5;
+  }
+  .empty-state {
+    text-align: center;
+    padding: 48px 24px;
+    color: #adb5bd;
+  }
+  .empty-state i { font-size: 48px; margin-bottom: 12px; display: block; }
+</style>
+
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-header bg-white border-bottom py-3">
+    <span class="fw-bold"><i class="bi bi-collection me-2 text-primary"></i>Stored Batches</span>
+    <span class="text-muted small ms-2">All processed files saved on server</span>
+  </div>
+  <div class="card-body">
+    {% if batches %}
+    <div class="row g-3">
+      {% for b in batches %}
+      <div class="col-12 col-md-6 col-lg-4">
+        <a href="{{ url_for('files.batch_files', batch_id=b.id) }}" class="batch-card">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <span class="badge {% if b.invoice_type == 'dala' %}bg-primary{% else %}bg-danger{% endif %}">{{ b.invoice_type|upper }}</span>
+            <span class="text-muted small">{{ b.file_count }} files stored</span>
+          </div>
+          <div class="fw-semibold text-dark" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ b.name }}</div>
+          <div class="text-muted mt-1" style="font-size:11px;">{{ b.created_at.strftime('%d %b %Y at %H:%M') if b.created_at else '' }}</div>
+        </a>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <i class="bi bi-folder"></i>
+      <div class="fw-semibold">No stored files yet</div>
+      <div class="small">Process some PODs to see stored files here.</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

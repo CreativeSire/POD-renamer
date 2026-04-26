@@ -51,7 +51,7 @@ def index():
         logs = conn.execute(text(f"""
             SELECT l.id, l.original_name, l.renamed_to, l.store_name, l.location,
                    l.invoice_number, l.invoice_date, l.brand_code, l.invoice_type,
-                   l.status, l.error_message, l.created_at,
+                   l.status, l.error_message, l.file_path, l.created_at,
                    b.name AS batch_name, u.full_name AS processed_by
             FROM logs l
             LEFT JOIN batches b ON b.id = l.batch_id
@@ -118,13 +118,17 @@ def batch_detail(batch_id):
         # Fetch logs with optional status filter
         if status_filter:
             logs = conn.execute(text("""
-                SELECT * FROM logs
-                WHERE batch_id = :id AND status = :status
-                ORDER BY created_at ASC
+                SELECT id, original_name, renamed_to, store_name, location,
+                   invoice_number, invoice_date, brand_code, status, error_message, file_path, created_at
+            FROM logs
+            WHERE batch_id = :id AND status = :status
+            ORDER BY created_at ASC
             """), {'id': batch_id, 'status': status_filter}).mappings().fetchall()
         else:
             logs = conn.execute(text("""
-                SELECT * FROM logs WHERE batch_id = :id ORDER BY created_at ASC
+                SELECT id, original_name, renamed_to, store_name, location,
+                   invoice_number, invoice_date, brand_code, status, error_message, file_path, created_at
+            FROM logs WHERE batch_id = :id ORDER BY created_at ASC
             """), {'id': batch_id}).mappings().fetchall()
 
     # Enrich logs with folder/filename split
