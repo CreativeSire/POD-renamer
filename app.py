@@ -31,6 +31,12 @@ def create_app():
     login_manager.login_message = 'Please log in to access this page.'
     login_manager.login_message_category = 'info'
 
+    @login_manager.unauthorized_handler
+    def unauthorized():
+        if request.path.startswith('/pod/'):
+            return jsonify({'success': False, 'error': 'Session expired. Please log in again.'}), 401
+        return redirect(url_for('auth.login', next=request.url))
+
     @login_manager.user_loader
     def load_user(user_id):
         from models.user import User
