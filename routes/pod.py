@@ -1,17 +1,21 @@
 import base64
+from io import BytesIO
 import json
 import os
 import re
+import threading
 import time
 
 import requests
 from flask import Blueprint, jsonify, make_response, render_template, request
 from flask_login import current_user, login_required
+from PIL import Image, ImageOps
 from sqlalchemy import text
 
 from database.schema import get_db, UPLOAD_FOLDER
 
 pod_bp = Blueprint('pod', __name__)
+_thread_local = threading.local()
 
 GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
 DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash'
@@ -99,6 +103,19 @@ def save_uploaded_file(batch_id, invoice_type, brand_code, file_bytes, filename)
     return file_path
 
 
+def make_storage_pdf(file_bytes, mime_type):
+    """Store successful image PODs as real PDFs for History/Files downloads."""
+    if mime_type == 'application/pdf':
+        return file_bytes
+    with Image.open(BytesIO(file_bytes)) as img:
+        img = ImageOps.exif_transpose(img)
+        if img.mode in ('RGBA', 'LA', 'P'):
+            img = img.convert('RGB')
+        out = BytesIO()
+        img.save(out, format='PDF', resolution=100.0)
+        return out.getvalue()
+
+
 def infer_mime_type(file):
     ext = os.path.splitext(file.filename.lower())[1]
     mime_type = file.mimetype or MIME_BY_EXTENSION.get(ext, 'image/jpeg')
@@ -116,6 +133,16 @@ def gemini_error_message(resp):
     except ValueError:
         pass
     return clean(resp.text)[:220] if resp.text else f'status {resp.status_code}'
+
+
+def get_http_session():
+    session = getattr(_thread_local, 'http_session', None)
+    if session is None:
+        session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=20)
+        session.mount('https://', adapter)
+        _thread_local.http_session = session
+    return session
 
 
 def call_gemini(file_bytes, mime_type, prompt):
@@ -148,7 +175,7 @@ def call_gemini(file_bytes, mime_type, prompt):
     for model in models:
         for attempt in range(2):
             try:
-                resp = requests.post(
+                resp = get_http_session().post(
                     f'{GEMINI_API_BASE}/{model}:generateContent?key={api_key}',
                     json=payload,
                     timeout=70,
@@ -314,7 +341,8 @@ def process():
         new_name = f'REVIEW_{clean(file.filename)}'
 
     # Always save the file to server storage (passed or review)
-    saved_path = save_uploaded_file(batch_id, invoice_type, brand_code, file_bytes, new_name)
+    storage_bytes = make_storage_pdf(file_bytes, mime_type) if status == 'passed' else file_bytes
+    saved_path = save_uploaded_file(batch_id, invoice_type, brand_code, storage_bytes, new_name)
 
     if batch_id:
         with get_db() as conn:
@@ -378,8 +406,8 @@ def reprocess_log(log_id):
     with open(log['file_path'], 'rb') as f:
         file_bytes = f.read()
 
-    # Determine mime type from original name
-    ext = os.path.splitext(log['original_name'].lower())[1]
+    # Successful stored outputs are PDFs even when the original upload was an image.
+    ext = os.path.splitext((log['file_path'] or log['original_name']).lower())[1]
     mime_type = MIME_BY_EXTENSION.get(ext, 'image/jpeg')
 
     store = loc = inv = date = brand_code = new_name = None
@@ -413,8 +441,8 @@ def reprocess_log(log_id):
             brand_code = next((code for key, code in BRAND_MAP.items() if key in brand_raw), 'XX')
             new_name = f'{store} - {loc} {brand_code}-{inv} {date}.pdf'
 
-        # Save with new name
-        saved_path = save_uploaded_file(batch_id, invoice_type, brand_code, file_bytes, new_name)
+        storage_bytes = make_storage_pdf(file_bytes, mime_type)
+        saved_path = save_uploaded_file(batch_id, invoice_type, brand_code, storage_bytes, new_name)
 
     except Exception as exc:
         status = 'review'
@@ -514,7 +542,8 @@ def process_batch():
             error_msg = str(exc)
             new_name = f'REVIEW_{clean(file.filename)}'
 
-        saved_path = save_uploaded_file(batch_id, invoice_type, brand_code, file_bytes, new_name)
+        storage_bytes = make_storage_pdf(file_bytes, mime_type) if status == 'passed' else file_bytes
+        saved_path = save_uploaded_file(batch_id, invoice_type, brand_code, storage_bytes, new_name)
 
         if batch_id:
             with get_db() as conn:

@@ -7,3 +7,4 @@ requests==2.32.3
 gunicorn==22.0.0
 python-dotenv==1.0.1
 werkzeug==3.0.6
+pillow==10.4.0

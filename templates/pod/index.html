@@ -32,6 +32,11 @@ input[type=file] { display:none; }
 {% endblock %}
 
 {% block content %}
+<div class="d-flex justify-content-end mb-3">
+  <button class="btn btn-dark btn-sm" id="pb-both" onclick="processBoth()">
+    <i class="bi bi-lightning-charge-fill me-1"></i> Process DALA + Brand
+  </button>
+</div>
 <div class="row g-4">
 
   <!-- DALA SECTION -->
@@ -198,7 +203,8 @@ input[type=file] { display:none; }
 
 {% block scripts %}
 <script>
-const CONCURRENCY = 10; // v10
+const CONCURRENCY = 20;
+const MAX_ACTIVE_REQUESTS = 20;
 const MAX_RETRIES = 2;
 
 // Auto-fill batch names on page load
@@ -214,6 +220,8 @@ const S = {
   brand: { files:[], results:[], blobs:[], batchId:null, folder:'Brand_Renamed' }
 };
 const dirHandles = { dala: null, brand: null };
+let activeRequests = 0;
+const requestWaiters = [];
 
 // ── Drag & drop ──────────────────────────────────────────────
 function dzOver(e,s) { e.preventDefault(); document.getElementById('dz-'+s).classList.add('dragover'); }
@@ -303,6 +311,18 @@ function updStats(s) {
 }
 
 // ── Processing ───────────────────────────────────────────────
+async function processBoth() {
+  const sections=['dala','brand'].filter(s=>S[s].files.length>0);
+  if(!sections.length){alert('Add DALA or Brand files first.');return;}
+  const btn=document.getElementById('pb-both');
+  btn.disabled=true; btn.innerHTML='<span class="pod-spin me-1"></span> Processing both...';
+  try { await Promise.all(sections.map(s=>processAll(s))); }
+  finally {
+    btn.disabled=false;
+    btn.innerHTML='<i class="bi bi-lightning-charge-fill me-1"></i> Process DALA + Brand';
+  }
+}
+
 async function processAll(s) {
   const batchNameInput=document.getElementById('batch-name-'+s);
   const batchName=batchNameInput.value.trim();
@@ -327,17 +347,36 @@ async function processAll(s) {
     S[s].batchId=bd.batch_id;
   } catch(e) { S[s].batchId=null; }
 
-  // Batch processing: send files in groups of 5 per request
-  const BATCH_SIZE = 5;
-  const fileIndices = S[s].files.map((_,i)=>i);
-  for(let i=0; i<fileIndices.length; i+=BATCH_SIZE){
-    const batch = fileIndices.slice(i, i+BATCH_SIZE);
-    await processBatch(s, batch);
-  }
+  const queue=S[s].files.map((_,i)=>i);
+  const workers=Math.min(CONCURRENCY, queue.length);
+  await Promise.all(Array.from({length:workers},()=>worker(s,queue)));
   updStats(s);
 }
 
+async function worker(s,q){while(q.length>0)await procFile(s,q.shift());}
+
 function sleep(ms){return new Promise(resolve=>setTimeout(resolve,ms));}
+
+async function acquireRequestSlot() {
+  if(activeRequests < MAX_ACTIVE_REQUESTS){
+    activeRequests++;
+    return;
+  }
+  await new Promise(resolve=>requestWaiters.push(resolve));
+  activeRequests++;
+}
+
+function releaseRequestSlot() {
+  activeRequests=Math.max(0,activeRequests-1);
+  const next=requestWaiters.shift();
+  if(next) next();
+}
+
+async function withRequestSlot(fn) {
+  await acquireRequestSlot();
+  try { return await fn(); }
+  finally { releaseRequestSlot(); }
+}
 
 async function fetchJson(url, options) {
   const resp = await fetch(url, options);
@@ -360,21 +399,21 @@ async function fetchJson(url, options) {
   return data;
 }
 
-async function processBatch(s, indices) {
-  // Mark all as processing
-  indices.forEach(i=>{ S[s].results[i].status='processing'; S[s].results[i].message='Extracting...'; updItemUI(s,i); });
-  updStats(s);
-
+async function procFile(s,i) {
+  S[s].results[i].status='processing'; updItemUI(s,i); updStats(s);
   try {
+    const f=S[s].files[i];
     const fd = new FormData();
     fd.append('invoice_type', s);
     if(S[s].batchId) fd.append('batch_id', S[s].batchId);
-    indices.forEach(i=>{ fd.append('files', S[s].files[i]); });
+    fd.append('file', f);
 
     let data;
     for(let attempt=0; attempt<=MAX_RETRIES; attempt++){
       try {
-        data = await fetchJson('/pod/process-batch', {method:'POST', body:fd});
+        S[s].results[i].message=attempt===0?'Extracting...':`Retrying ${attempt}/${MAX_RETRIES}...`;
+        updItemUI(s,i);
+        data=await withRequestSlot(()=>fetchJson('/pod/process',{method:'POST',body:fd}));
         break;
       } catch(err) {
         if(attempt>=MAX_RETRIES || !err.retryable) throw err;
@@ -382,41 +421,23 @@ async function processBatch(s, indices) {
       }
     }
 
-    // Distribute results back to individual files
-    if(data.results && data.results.length === indices.length){
-      for(let j=0; j<indices.length; j++){
-        const i = indices[j];
-        const res = data.results[j];
-        if(res.success){
-          S[s].results[i].status='done';
-          S[s].results[i].filename=res.filename;
-          S[s].results[i].filePath=res.file_path||null;
-          S[s].results[i].message='';
-        } else {
-          S[s].results[i].status='review';
-          S[s].results[i].error=res.error||'Extraction failed';
-          S[s].results[i].message='';
-        }
-      }
-    } else {
-      throw new Error('Batch response mismatch');
-    }
-  } catch(e) {
-    // If batch fails entirely, mark all as review
-    indices.forEach(i=>{
-      S[s].results[i].status='review';
-      S[s].results[i].error=e.message;
-      S[s].results[i].message='';
-    });
-  }
+    if(!data.success) throw new Error(data.error||'Extraction failed');
 
-  // Generate PDF blobs for passed files
-  for(const i of indices){
-    if(S[s].results[i].status==='done'){
-      try { S[s].blobs[i]=await imgToPdf(S[s].files[i]); } catch(_){ S[s].blobs[i]=null; }
-    }
+    S[s].results[i].message='Preparing PDF...';
     updItemUI(s,i);
+    const pdfBlob=await imgToPdf(f);
+
+    S[s].results[i].status='done';
+    S[s].results[i].filename=data.filename;
+    S[s].results[i].filePath=data.file_path||null;
+    S[s].results[i].message='';
+    S[s].blobs[i]=pdfBlob;
+  } catch(e) {
+    S[s].results[i].status='review';
+    S[s].results[i].error=e.message;
+    S[s].results[i].message='';
   }
+  updItemUI(s,i);
   updStats(s);
 }
 
