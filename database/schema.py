@@ -118,4 +118,15 @@ def init_db():
             'password_hash': generate_password_hash('Projectfame26'),
         })
 
+        # Create super admin account
+        conn.execute(text("""
+            INSERT INTO users (username, full_name, password_hash, role)
+            VALUES (:username, :full_name, :password_hash, 'super_admin')
+            ON CONFLICT (username) DO NOTHING
+        """), {
+            'username': 'Creddypensmedia',
+            'full_name': 'Super Admin',
+            'password_hash': generate_password_hash('Creddy@Admin26'),
+        })
+
         conn.commit()

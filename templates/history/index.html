@@ -61,6 +61,18 @@
   .empty-state i { font-size: 48px; margin-bottom: 12px; display: block; }
 </style>
 
+<!-- Admin actions -->
+{% if current_user.is_super_admin() %}
+<div class="d-flex gap-2 mb-3">
+  <button class="btn btn-outline-danger btn-sm" onclick="deleteToday()">
+    <i class="bi bi-trash me-1"></i>Delete Today's Data
+  </button>
+  <button class="btn btn-outline-primary btn-sm" onclick="backupDb()">
+    <i class="bi bi-database-down me-1"></i>Backup DB
+  </button>
+</div>
+{% endif %}
+
 <!-- Filters -->
 <div class="card border-0 shadow-sm mb-4">
   <div class="card-body py-3">
@@ -85,6 +97,7 @@
       <div class="col-12 col-md-4 d-flex gap-2">
         <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-search me-1"></i>Search</button>
         <a href="{{ url_for('history.index') }}" class="btn btn-outline-secondary btn-sm">Clear</a>
+        <a href="{{ url_for('history.export_csv') }}" class="btn btn-outline-success btn-sm"><i class="bi bi-file-earmark-excel me-1"></i>Export CSV</a>
       </div>
     </form>
   </div>
@@ -224,4 +237,24 @@
     </div>
   </div>
 </div>
+
+{% block scripts %}
+<script>
+async function deleteToday(){
+  if(!confirm('Delete ALL data from today? This cannot be undone.')) return;
+  try{
+    const r=await fetch('/admin/delete-today',{method:'POST'});
+    const d=await r.json();
+    alert(d.message||'Done');
+    if(d.success) location.reload();
+  }catch(e){alert('Error: '+e.message);}
+}
+async function backupDb(){
+  try{
+    const r=await fetch('/admin/backup',{method:'POST'});
+    const d=await r.json();
+    alert(d.success?'Backup created: '+d.file:'Error: '+d.error);
+  }catch(e){alert('Error: '+e.message);}
+}
+</script>
 {% endblock %}

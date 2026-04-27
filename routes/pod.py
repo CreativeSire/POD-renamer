@@ -354,3 +354,200 @@ def process():
         'date': date,
         'file_path': saved_path,
     })
+
+
+@pod_bp.route('/pod/reprocess/<int:log_id>', methods=['POST'])
+@login_required
+def reprocess_log(log_id):
+    with get_db() as conn:
+        log = conn.execute(text("""
+            SELECT id, batch_id, original_name, invoice_type, file_path
+            FROM logs WHERE id = :id
+        """), {'id': log_id}).mappings().fetchone()
+
+    if not log:
+        return jsonify({'success': False, 'error': 'Log not found.'}), 404
+
+    batch_id = log['batch_id']
+    invoice_type = log['invoice_type']
+
+    # Read stored file
+    if not log['file_path'] or not os.path.exists(log['file_path']):
+        return jsonify({'success': False, 'error': 'Original file not found on server.'}), 404
+
+    with open(log['file_path'], 'rb') as f:
+        file_bytes = f.read()
+
+    # Determine mime type from original name
+    ext = os.path.splitext(log['original_name'].lower())[1]
+    mime_type = MIME_BY_EXTENSION.get(ext, 'image/jpeg')
+
+    store = loc = inv = date = brand_code = new_name = None
+    status = 'passed'
+    error_msg = None
+    saved_path = log['file_path']
+
+    try:
+        prompt = DALA_PROMPT if invoice_type == 'dala' else BRAND_PROMPT
+        parsed = call_gemini(file_bytes, mime_type, prompt)
+
+        store = clean(parsed.get('supermarket', ''))
+        loc = clean(parsed.get('location', ''))
+        inv = re.sub(
+            r'^(N0|NO|DT|AG|PH|WH|MT|ET)-?',
+            '',
+            clean(parsed.get('invoice', '')),
+            flags=re.IGNORECASE,
+        ).strip()
+        date = normalize_date(parsed.get('date', ''), invoice_type)
+
+        if not store or not loc or not inv:
+            raise ValueError(f'Incomplete data: {parsed}')
+
+        if invoice_type == 'dala':
+            if re.match(r'^\d{6}$', date):
+                date = f'{date[:2]}-{date[2:4]}-20{date[4:6]}'
+            new_name = f'{store} - {loc} DT-{inv} - {date}.pdf'
+        else:
+            brand_raw = parsed.get('brand', '').lower().strip()
+            brand_code = next((code for key, code in BRAND_MAP.items() if key in brand_raw), 'XX')
+            new_name = f'{store} - {loc} {brand_code}-{inv} {date}.pdf'
+
+        # Save with new name
+        saved_path = save_uploaded_file(batch_id, invoice_type, brand_code, file_bytes, new_name)
+
+    except Exception as exc:
+        status = 'review'
+        error_msg = str(exc)
+        new_name = f'REVIEW_{clean(log["original_name"])}'
+
+    # Update log record
+    with get_db() as conn:
+        conn.execute(text("""
+            UPDATE logs SET
+                renamed_to = :renamed,
+                store_name = :store,
+                location = :loc,
+                invoice_number = :inv,
+                invoice_date = :date,
+                brand_code = :brand,
+                status = :status,
+                error_message = :err,
+                file_path = :fpath
+            WHERE id = :id
+        """), {
+            'id': log_id, 'renamed': new_name, 'store': store, 'loc': loc,
+            'inv': inv, 'date': date, 'brand': brand_code,
+            'status': status, 'err': error_msg, 'fpath': saved_path,
+        })
+        conn.commit()
+
+    if status == 'review':
+        return jsonify({'success': False, 'error': error_msg, 'status': 'review', 'filename': new_name}), 422
+
+    return jsonify({
+        'success': True,
+        'filename': new_name,
+        'store': store,
+        'location': loc,
+        'invoice': inv,
+        'date': date,
+        'file_path': saved_path,
+    })
+
+
+@pod_bp.route('/pod/process-batch', methods=['POST'])
+@login_required
+def process_batch():
+    """Process multiple files in a single request."""
+    invoice_type = request.form.get('invoice_type', 'dala')
+    batch_id = request.form.get('batch_id', type=int)
+    files = request.files.getlist('files')
+
+    if invoice_type not in {'dala', 'brand'}:
+        return jsonify({'success': False, 'error': 'Invalid invoice type.'}), 400
+    if not files:
+        return jsonify({'success': False, 'error': 'No files received'}), 400
+
+    results = []
+    for file in files:
+        if not allowed_file(file.filename):
+            results.append({'success': False, 'error': 'Unsupported file type.', 'original': file.filename})
+            continue
+
+        mime_type = infer_mime_type(file)
+        file_bytes = file.read()
+
+        store = loc = inv = date = brand_code = new_name = None
+        status = 'passed'
+        error_msg = None
+        saved_path = None
+
+        try:
+            prompt = DALA_PROMPT if invoice_type == 'dala' else BRAND_PROMPT
+            parsed = call_gemini(file_bytes, mime_type, prompt)
+
+            store = clean(parsed.get('supermarket', ''))
+            loc = clean(parsed.get('location', ''))
+            inv = re.sub(
+                r'^(N0|NO|DT|AG|PH|WH|MT|ET)-?',
+                '',
+                clean(parsed.get('invoice', '')),
+                flags=re.IGNORECASE,
+            ).strip()
+            date = normalize_date(parsed.get('date', ''), invoice_type)
+
+            if not store or not loc or not inv:
+                raise ValueError(f'Incomplete data: {parsed}')
+
+            if invoice_type == 'dala':
+                if re.match(r'^\d{6}$', date):
+                    date = f'{date[:2]}-{date[2:4]}-20{date[4:6]}'
+                new_name = f'{store} - {loc} DT-{inv} - {date}.pdf'
+            else:
+                brand_raw = parsed.get('brand', '').lower().strip()
+                brand_code = next((code for key, code in BRAND_MAP.items() if key in brand_raw), 'XX')
+                new_name = f'{store} - {loc} {brand_code}-{inv} {date}.pdf'
+
+        except Exception as exc:
+            status = 'review'
+            error_msg = str(exc)
+            new_name = f'REVIEW_{clean(file.filename)}'
+
+        saved_path = save_uploaded_file(batch_id, invoice_type, brand_code, file_bytes, new_name)
+
+        if batch_id:
+            with get_db() as conn:
+                conn.execute(text("""
+                    INSERT INTO logs (batch_id, original_name, renamed_to, store_name, location,
+                                      invoice_number, invoice_date, brand_code, invoice_type, status, error_message, file_path)
+                    VALUES (:bid, :orig, :renamed, :store, :loc, :inv, :date, :brand, :type, :status, :err, :fpath)
+                """), {
+                    'bid': batch_id, 'orig': file.filename, 'renamed': new_name,
+                    'store': store, 'loc': loc, 'inv': inv, 'date': date,
+                    'brand': brand_code, 'type': invoice_type,
+                    'status': status, 'err': error_msg, 'fpath': saved_path,
+                })
+                conn.execute(text("""
+                    UPDATE batches SET
+                        total_files = total_files + 1,
+                        passed = passed + :p,
+                        review = review + :r
+                    WHERE id = :bid
+                """), {
+                    'p': 1 if status == 'passed' else 0,
+                    'r': 1 if status == 'review' else 0,
+                    'bid': batch_id,
+                })
+                conn.commit()
+
+        results.append({
+            'success': status == 'passed',
+            'filename': new_name,
+            'original': file.filename,
+            'status': status,
+            'error': error_msg,
+            'file_path': saved_path,
+        })
+
+    return jsonify({'success': True, 'results': results})

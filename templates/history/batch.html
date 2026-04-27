@@ -1,5 +1,22 @@
 {% extends "base.html" %}
-{% block title %}Batch: {{ batch.name }}{% endblock %}
+{% block title %}Batch: {{ batch.name }}{% block scripts %}
+<script>
+async function reprocess(logId, btn){
+  btn.disabled=true; btn.innerHTML='<span class="spinner-border spinner-border-sm"></span>';
+  try{
+    const r=await fetch('/pod/reprocess/'+logId,{method:'POST'});
+    const d=await r.json();
+    if(d.success){
+      alert('Re-processed: '+d.filename);
+      location.reload();
+    } else {
+      alert('Still needs review: '+d.error);
+      location.reload();
+    }
+  }catch(e){alert('Error: '+e.message); btn.disabled=false; btn.innerHTML='<i class="bi bi-arrow-clockwise"></i>';}
+}
+</script>
+{% endblock %}
 {% block page_title %}<i class="bi bi-collection me-2 text-primary"></i>{{ batch.name }}{% endblock %}
 
 {% block topbar_actions %}
@@ -136,6 +153,7 @@
             <th>Invoice</th>
             <th>Date</th>
             <th>Status</th>
+            <th>Retry</th>
             <th>File</th>
           </tr>
         </thead>
@@ -169,6 +187,15 @@
                 </span>
               {% else %}
                 <span class="status-badge status-failed"><i class="bi bi-x-circle-fill me-1"></i>Failed</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if log.status == 'review' %}
+                <button class="btn btn-outline-warning btn-sm py-0 px-1" onclick="reprocess({{ log.id }}, this)" title="Retry">
+                  <i class="bi bi-arrow-clockwise"></i>
+                </button>
+              {% else %}
+                <span class="text-muted small">—</span>
               {% endif %}
             </td>
             <td>

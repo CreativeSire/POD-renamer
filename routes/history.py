@@ -1,10 +1,25 @@
+import csv
+import io
 import os
-from flask import Blueprint, render_template, request, jsonify
-from flask_login import login_required
-from database.schema import get_db
+from datetime import datetime, timedelta
+from functools import wraps
+
+from flask import Blueprint, render_template, request, jsonify, Response
+from flask_login import login_required, current_user
+from database.schema import get_db, UPLOAD_FOLDER
 from sqlalchemy import text
 
 history_bp = Blueprint('history', __name__)
+
+
+def super_admin_required(f):
+    @wraps(f)
+    @login_required
+    def decorated_function(*args, **kwargs):
+        if not current_user.is_super_admin():
+            return jsonify({'success': False, 'error': 'Super admin required.'}), 403
+        return f(*args, **kwargs)
+    return decorated_function
 
 
 def split_folder_filename(original_name):
@@ -89,6 +104,44 @@ def index():
     )
 
 
+@history_bp.route('/history/export')
+@login_required
+def export_csv():
+    with get_db() as conn:
+        rows = conn.execute(text("""
+            SELECT l.id, l.original_name, l.renamed_to, l.store_name, l.location,
+                   l.invoice_number, l.invoice_date, l.brand_code, l.invoice_type,
+                   l.status, l.error_message, l.created_at,
+                   b.name AS batch_name
+            FROM logs l
+            LEFT JOIN batches b ON b.id = l.batch_id
+            ORDER BY l.created_at DESC
+        """)).mappings().fetchall()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        'ID', 'Batch Name', 'Original Name', 'Renamed To', 'Store',
+        'Location', 'Invoice', 'Date', 'Brand Code', 'Type',
+        'Status', 'Error', 'Created At'
+    ])
+    for row in rows:
+        writer.writerow([
+            row['id'], row['batch_name'], row['original_name'], row['renamed_to'],
+            row['store_name'], row['location'], row['invoice_number'],
+            row['invoice_date'], row['brand_code'], row['invoice_type'],
+            row['status'], row['error_message'],
+            row['created_at'].strftime('%Y-%m-%d %H:%M') if row['created_at'] else ''
+        ])
+
+    output.seek(0)
+    return Response(
+        output,
+        mimetype='text/csv',
+        headers={'Content-Disposition': 'attachment; filename=history_export.csv'}
+    )
+
+
 @history_bp.route('/history/batch/<int:batch_id>')
 @login_required
 def batch_detail(batch_id):
@@ -154,3 +207,52 @@ def delete_batch(batch_id):
         conn.commit()
     return jsonify({'success': True})
 
+
+# ── Super Admin endpoints ──────────────────────────────────────
+
+@history_bp.route('/admin/delete-today', methods=['POST'])
+@super_admin_required
+def delete_today():
+    today = datetime.utcnow().date()
+    tomorrow = today + timedelta(days=1)
+    with get_db() as conn:
+        # Get batch IDs to clean up storage
+        batch_ids = conn.execute(text("""
+            SELECT id FROM batches
+            WHERE created_at >= :today AND created_at < :tomorrow
+        """), {'today': today, 'tomorrow': tomorrow}).mappings().fetchall()
+
+        for row in batch_ids:
+            bid = row['id']
+            batch_dir = os.path.join(UPLOAD_FOLDER, f'batch_{bid}')
+            if os.path.exists(batch_dir):
+                import shutil
+                shutil.rmtree(batch_dir)
+
+        conn.execute(text("""
+            DELETE FROM logs WHERE batch_id IN (
+                SELECT id FROM batches WHERE created_at >= :today AND created_at < :tomorrow
+            )
+        """), {'today': today, 'tomorrow': tomorrow})
+        conn.execute(text("""
+            DELETE FROM batches WHERE created_at >= :today AND created_at < :tomorrow
+        """), {'today': today, 'tomorrow': tomorrow})
+        conn.commit()
+    return jsonify({'success': True, 'message': "Today's data cleared."})
+
+
+@history_bp.route('/admin/backup', methods=['POST'])
+@super_admin_required
+def backup_database():
+    import subprocess
+    url = os.environ.get('DATABASE_URL', '').replace('postgres://', 'postgresql://', 1)
+    timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    backup_file = os.path.join(UPLOAD_FOLDER, f'backup_{timestamp}.sql')
+    try:
+        subprocess.run(
+            ['pg_dump', url, '-f', backup_file],
+            check=True, capture_output=True, text=True
+        )
+        return jsonify({'success': True, 'file': f'backup_{timestamp}.sql'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500

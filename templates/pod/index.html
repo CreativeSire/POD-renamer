@@ -327,11 +327,15 @@ async function processAll(s) {
     S[s].batchId=bd.batch_id;
   } catch(e) { S[s].batchId=null; }
 
-  const queue=S[s].files.map((_,i)=>i);
-  await Promise.all(Array.from({length:CONCURRENCY},()=>worker(s,queue)));
+  // Batch processing: send files in groups of 5 per request
+  const BATCH_SIZE = 5;
+  const fileIndices = S[s].files.map((_,i)=>i);
+  for(let i=0; i<fileIndices.length; i+=BATCH_SIZE){
+    const batch = fileIndices.slice(i, i+BATCH_SIZE);
+    await processBatch(s, batch);
+  }
   updStats(s);
 }
-async function worker(s,q){while(q.length>0)await procFile(s,q.shift());}
 
 function sleep(ms){return new Promise(resolve=>setTimeout(resolve,ms));}
 
@@ -356,24 +360,21 @@ async function fetchJson(url, options) {
   return data;
 }
 
-async function procFile(s,i) {
-  S[s].results[i].status='processing'; updItemUI(s,i); updStats(s);
-  try {
-    const f=S[s].files[i];
-    // Convert image to real PDF
-    const pdfBlob=await imgToPdf(f);
+async function processBatch(s, indices) {
+  // Mark all as processing
+  indices.forEach(i=>{ S[s].results[i].status='processing'; S[s].results[i].message='Extracting...'; updItemUI(s,i); });
+  updStats(s);
 
-    const fd=new FormData();
-    fd.append('file',f);
-    fd.append('invoice_type',s);
-    if(S[s].batchId) fd.append('batch_id',S[s].batchId);
+  try {
+    const fd = new FormData();
+    fd.append('invoice_type', s);
+    if(S[s].batchId) fd.append('batch_id', S[s].batchId);
+    indices.forEach(i=>{ fd.append('files', S[s].files[i]); });
 
     let data;
-    for(let attempt=0;attempt<=MAX_RETRIES;attempt++){
+    for(let attempt=0; attempt<=MAX_RETRIES; attempt++){
       try {
-        S[s].results[i].message=attempt===0?'Extracting...':`Retrying ${attempt}/${MAX_RETRIES}...`;
-        updItemUI(s,i);
-        data=await fetchJson('/pod/process',{method:'POST',body:fd});
+        data = await fetchJson('/pod/process-batch', {method:'POST', body:fd});
         break;
       } catch(err) {
         if(attempt>=MAX_RETRIES || !err.retryable) throw err;
@@ -381,19 +382,42 @@ async function procFile(s,i) {
       }
     }
 
-    if(!data.success) throw new Error(data.error||'Extraction failed');
-
-    S[s].results[i].status='done';
-    S[s].results[i].filename=data.filename;
-    S[s].results[i].filePath=data.file_path||null;
-    S[s].results[i].message='';
-    S[s].blobs[i]=pdfBlob;
+    // Distribute results back to individual files
+    if(data.results && data.results.length === indices.length){
+      for(let j=0; j<indices.length; j++){
+        const i = indices[j];
+        const res = data.results[j];
+        if(res.success){
+          S[s].results[i].status='done';
+          S[s].results[i].filename=res.filename;
+          S[s].results[i].filePath=res.file_path||null;
+          S[s].results[i].message='';
+        } else {
+          S[s].results[i].status='review';
+          S[s].results[i].error=res.error||'Extraction failed';
+          S[s].results[i].message='';
+        }
+      }
+    } else {
+      throw new Error('Batch response mismatch');
+    }
   } catch(e) {
-    S[s].results[i].status='review';
-    S[s].results[i].error=e.message;
-    S[s].results[i].message='';
+    // If batch fails entirely, mark all as review
+    indices.forEach(i=>{
+      S[s].results[i].status='review';
+      S[s].results[i].error=e.message;
+      S[s].results[i].message='';
+    });
   }
-  updItemUI(s,i); updStats(s);
+
+  // Generate PDF blobs for passed files
+  for(const i of indices){
+    if(S[s].results[i].status==='done'){
+      try { S[s].blobs[i]=await imgToPdf(S[s].files[i]); } catch(_){ S[s].blobs[i]=null; }
+    }
+    updItemUI(s,i);
+  }
+  updStats(s);
 }
 
 // ── Image to PDF ─────────────────────────────────────────────
@@ -442,8 +466,11 @@ async function saveFiles(s) {
     // Create output subfolder structure
     const brandFolders = {'AG':'August Secret','PH':'Prothrive','WH':'Whole Eat','ET':'Etifarm','XX':'Other'};
     for(let i=0;i<S[s].results.length;i++){
-      const r=S[s].results[i]; const blob=S[s].blobs[i];
-      if(r.status!=='done'||!r.filename||!blob) continue;
+      const r=S[s].results[i]; let blob=S[s].blobs[i];
+      if(r.status!=='done'||!r.filename) continue;
+      // Generate blob if missing
+      if(!blob){ try { blob=await imgToPdf(S[s].files[i]); S[s].blobs[i]=blob; } catch(_){ continue; } }
+      if(!blob) continue;
       let name=r.filename;
       if(nc[name]!==undefined){nc[name]++;const pts=name.split('.');const ext=pts.pop();name=pts.join('.')+' ('+nc[name]+').'+ext;}
       else nc[name]=0;

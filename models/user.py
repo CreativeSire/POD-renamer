@@ -14,7 +14,10 @@ class User(UserMixin):
         self.role = role
 
     def is_admin(self):
-        return self.role == 'admin'
+        return self.role in {'admin', 'super_admin'}
+
+    def is_super_admin(self):
+        return self.role == 'super_admin'
 
     @staticmethod
     def get_by_id(user_id):
