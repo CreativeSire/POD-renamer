@@ -384,8 +384,6 @@ async function procFile(s,i) {
     S[s].results[i].status='review';
     S[s].results[i].error=e.message;
     S[s].results[i].message='';
-    // Still create a blob for review files so they can be saved
-    try { S[s].blobs[i]=await imgToPdf(S[s].files[i]); } catch(_){ S[s].blobs[i]=null; }
   }
   updItemUI(s,i); updStats(s);
 }
@@ -432,12 +430,12 @@ async function saveFiles(s) {
   btn.disabled=true; btn.innerHTML='<span class="pod-spin me-1"></span> Saving...';
   try {
     const nc={};let saved=0;
-    const ready=S[s].results.filter((r,i)=>(r.status==='done'||r.status==='review')&&r.filename&&S[s].blobs[i]).length;
+    const ready=S[s].results.filter((r,i)=>r.status==='done'&&r.filename&&S[s].blobs[i]).length;
     // Create output subfolder structure
     const brandFolders = {'AG':'August Secret','PH':'Prothrive','WH':'Whole Eat','ET':'Etifarm','XX':'Other'};
     for(let i=0;i<S[s].results.length;i++){
       const r=S[s].results[i]; const blob=S[s].blobs[i];
-      if((r.status!=='done'&&r.status!=='review')||!r.filename||!blob) continue;
+      if(r.status!=='done'||!r.filename||!blob) continue;
       let name=r.filename;
       if(nc[name]!==undefined){nc[name]++;const pts=name.split('.');const ext=pts.pop();name=pts.join('.')+' ('+nc[name]+').'+ext;}
       else nc[name]=0;
