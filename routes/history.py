@@ -6,7 +6,7 @@ from functools import wraps
 
 from flask import Blueprint, render_template, request, jsonify, Response
 from flask_login import login_required, current_user
-from database.schema import get_db, UPLOAD_FOLDER
+from database.schema import get_db, UPLOAD_FOLDER, BACKUP_FOLDER
 from sqlalchemy import text
 
 history_bp = Blueprint('history', __name__)
@@ -245,14 +245,20 @@ def delete_today():
 @super_admin_required
 def backup_database():
     import subprocess
+    import gzip
     url = os.environ.get('DATABASE_URL', '').replace('postgres://', 'postgresql://', 1)
     timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-    backup_file = os.path.join(UPLOAD_FOLDER, f'backup_{timestamp}.sql')
+    raw_file = os.path.join(BACKUP_FOLDER, f'backup_{timestamp}.sql')
+    gz_file = raw_file + '.gz'
     try:
         subprocess.run(
-            ['pg_dump', url, '-f', backup_file],
+            ['pg_dump', url, '-f', raw_file],
             check=True, capture_output=True, text=True
         )
-        return jsonify({'success': True, 'file': f'backup_{timestamp}.sql'})
+        with open(raw_file, 'rb') as f_in:
+            with gzip.open(gz_file, 'wb') as f_out:
+                f_out.write(f_in.read())
+        os.remove(raw_file)
+        return jsonify({'success': True, 'file': f'backup_{timestamp}.sql.gz'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

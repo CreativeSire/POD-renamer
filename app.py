@@ -20,8 +20,9 @@ def create_app():
     app.config['REMEMBER_COOKIE_HTTPONLY'] = True
     app.config['REMEMBER_COOKIE_SAMESITE'] = 'Lax'
 
-    from database.schema import init_db
+    from database.schema import init_db, start_auto_backup
     init_db()
+    start_auto_backup()
 
     from models.user import bcrypt
     bcrypt.init_app(app)

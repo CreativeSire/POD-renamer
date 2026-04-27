@@ -1,5 +1,9 @@
 import os
+import subprocess
+import gzip
+import threading
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
@@ -9,6 +13,53 @@ _engine = None
 
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+BACKUP_FOLDER = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'backups')
+os.makedirs(BACKUP_FOLDER, exist_ok=True)
+
+
+# ── Automatic daily backups (compressed, never deleted) ─────────────────────
+_backup_timer = None
+
+
+def _run_backup():
+    """Dump the database to a gzip-compressed SQL file."""
+    url = os.environ.get('DATABASE_URL', '').strip()
+    if not url:
+        return
+    if url.startswith('postgres://'):
+        url = url.replace('postgres://', 'postgresql://', 1)
+    timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    raw_file = os.path.join(BACKUP_FOLDER, f'backup_{timestamp}.sql')
+    gz_file = raw_file + '.gz'
+    try:
+        subprocess.run(
+            ['pg_dump', url, '-f', raw_file],
+            check=True, capture_output=True, text=True
+        )
+        with open(raw_file, 'rb') as f_in:
+            with gzip.open(gz_file, 'wb') as f_out:
+                f_out.write(f_in.read())
+        os.remove(raw_file)  # keep only compressed version
+    except Exception:
+        pass
+
+
+def _schedule_next_backup():
+    global _backup_timer
+    _run_backup()
+    # Schedule next run in 24 hours
+    _backup_timer = threading.Timer(86400, _schedule_next_backup)
+    _backup_timer.daemon = True
+    _backup_timer.start()
+
+
+def start_auto_backup():
+    """Start the 24-hour backup loop (runs first backup immediately)."""
+    global _backup_timer
+    if _backup_timer is None:
+        t = threading.Thread(target=_schedule_next_backup, daemon=True)
+        t.start()
 
 
 def get_database_url():
@@ -118,15 +169,21 @@ def init_db():
             'password_hash': generate_password_hash('Projectfame26'),
         })
 
-        # Create super admin account
-        conn.execute(text("""
-            INSERT INTO users (username, full_name, password_hash, role)
-            VALUES (:username, :full_name, :password_hash, 'super_admin')
-            ON CONFLICT (username) DO NOTHING
-        """), {
-            'username': 'Creddypensmedia',
-            'full_name': 'Super Admin',
-            'password_hash': generate_password_hash('Creddy@Admin26'),
-        })
+        # Create super admin account from env vars
+        super_username = os.environ.get('SUPER_ADMIN_USERNAME', '').strip()
+        super_full_name = os.environ.get('SUPER_ADMIN_FULL_NAME', 'Super Admin').strip() or 'Super Admin'
+        super_password = os.environ.get('SUPER_ADMIN_PASSWORD', '').strip()
+        if super_username and super_password:
+            conn.execute(text("""
+                INSERT INTO users (username, full_name, password_hash, role)
+                VALUES (:username, :full_name, :password_hash, 'super_admin')
+                ON CONFLICT (username) DO UPDATE SET
+                    full_name = EXCLUDED.full_name,
+                    password_hash = EXCLUDED.password_hash
+            """), {
+                'username': super_username,
+                'full_name': super_full_name,
+                'password_hash': generate_password_hash(super_password),
+            })
 
         conn.commit()
