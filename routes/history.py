@@ -154,3 +154,21 @@ def delete_batch(batch_id):
         conn.commit()
     return jsonify({'success': True})
 
+
+# TEMP: clear all data and storage
+@history_bp.route('/admin/clear-all', methods=['GET'])
+def clear_all():
+    import os
+    from database.schema import UPLOAD_FOLDER
+    with get_db() as conn:
+        conn.execute(text("TRUNCATE TABLE logs, batches RESTART IDENTITY CASCADE"))
+        conn.commit()
+    # Clear uploads
+    if os.path.exists(UPLOAD_FOLDER):
+        for root, dirs, files in os.walk(UPLOAD_FOLDER, topdown=False):
+            for name in files:
+                os.remove(os.path.join(root, name))
+            for name in dirs:
+                os.rmdir(os.path.join(root, name))
+    return jsonify({'success': True, 'message': 'Cleared.'})
+
