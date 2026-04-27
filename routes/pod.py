@@ -308,12 +308,13 @@ def process():
             brand_code = next((code for key, code in BRAND_MAP.items() if key in brand_raw), 'XX')
             new_name = f'{store} - {loc} {brand_code}-{inv} {date}.pdf'
 
-        # Save to server storage
-        saved_path = save_uploaded_file(batch_id, invoice_type, brand_code, file_bytes, new_name)
-
     except Exception as exc:
         status = 'review'
         error_msg = str(exc)
+        new_name = f'REVIEW_{clean(file.filename)}'
+
+    # Always save the file to server storage (passed or review)
+    saved_path = save_uploaded_file(batch_id, invoice_type, brand_code, file_bytes, new_name)
 
     if batch_id:
         with get_db() as conn:
@@ -341,7 +342,7 @@ def process():
             conn.commit()
 
     if status == 'review':
-        return jsonify({'success': False, 'error': error_msg, 'status': 'review'}), 422
+        return jsonify({'success': False, 'error': error_msg, 'status': 'review', 'filename': new_name, 'file_path': saved_path}), 422
 
     return jsonify({
         'success': True,
