@@ -196,7 +196,9 @@ input[type=file] { display:none; }
 
 {% block scripts %}
 <script>
-const CONCURRENCY = 6;
+const CONCURRENCY = 4;
+const MAX_RETRIES = 2;
+const RETRY_STATUSES = new Set([408,409,425,429,500,502,503,504]);
 const S = {
   dala:  { files:[], results:[], blobs:[], batchId:null, folder:'DALA_Renamed' },
   brand: { files:[], results:[], blobs:[], batchId:null, folder:'Brand_Renamed' }
@@ -254,7 +256,7 @@ function updItemUI(s,i) {
   const fn=document.getElementById(`fn-${s}-${i}`); const bs=document.getElementById(`bs-${s}-${i}`);
   el.className='pod-fi '+r.status;
   if(r.status==='waiting'){fn.textContent='Waiting...';bs.className='badge bg-secondary';bs.textContent='Waiting';}
-  else if(r.status==='processing'){fn.innerHTML='<span class="text-warning">Extracting...</span>';bs.className='badge bg-warning text-dark';bs.innerHTML='<div class="pod-spin"></div>';}
+  else if(r.status==='processing'){fn.innerHTML=`<span class="text-warning">${esc(r.message||'Extracting...')}</span>`;bs.className='badge bg-warning text-dark';bs.innerHTML='<div class="pod-spin"></div>';}
   else if(r.status==='done'){fn.textContent=r.filename;bs.className='badge bg-success';bs.textContent='Passed';}
   else{fn.innerHTML=`<span class="text-danger small">${esc(r.error)}</span>`;bs.className='badge bg-danger';bs.textContent='Review';}
 }
@@ -271,15 +273,15 @@ function updStats(s) {
   document.getElementById('pf-'+s).style.width=(tot>0?fin/tot*100:0)+'%';
   const pl=document.getElementById('pl-'+s);
   if(pl){pl.style.display='block';pl.textContent=`${fin} of ${tot} processed`;}
+  if(don>0){
+    document.getElementById('zs-'+s).style.cssText='display:flex!important;';
+    document.getElementById('zsub-'+s).textContent=`${don} ready to save - ${run} processing - ${fai} need review`;
+  } else {
+    document.getElementById('zs-'+s).style.cssText='display:none!important;';
+  }
   if(fin===tot&&tot>0){
     const pb=document.getElementById('pb-'+s);
     pb.disabled=false; pb.innerHTML='<i class="bi bi-play-fill me-1"></i> Process All';
-    if(don>0){
-      document.getElementById('zs-'+s).style.cssText='display:flex!important;';
-      document.getElementById('zsub-'+s).textContent=`${don} passed • ${fai} need review`;
-    } else {
-      document.getElementById('zs-'+s).style.cssText='display:none!important;';
-    }
   }
 }
 
@@ -288,7 +290,7 @@ async function processAll(s) {
   const pb=document.getElementById('pb-'+s);
   pb.disabled=true; pb.innerHTML='<span class="pod-spin me-1"></span> Processing...';
   document.getElementById('zs-'+s).style.cssText='display:none!important;';
-  S[s].results.forEach(r=>{r.status='waiting';r.filename=null;r.error='';});
+  S[s].results.forEach(r=>{r.status='waiting';r.filename=null;r.error='';r.message='';r.filePath=null;});
   S[s].blobs=S[s].files.map(()=>null);
   renderList(s); updStats(s);
 
@@ -296,9 +298,8 @@ async function processAll(s) {
   const batchName=document.getElementById('batch-name-'+s).value.trim()||
     (s==='dala'?'DALA Batch':'Brand Batch')+' '+new Date().toLocaleDateString('en-GB');
   try {
-    const br=await fetch('/pod/batch/start',{method:'POST',headers:{'Content-Type':'application/json'},
+    const bd=await fetchJson('/pod/batch/start',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({name:batchName,invoice_type:s})});
-    const bd=await br.json();
     S[s].batchId=bd.batch_id;
   } catch(e) { S[s].batchId=null; }
 
@@ -307,6 +308,29 @@ async function processAll(s) {
   updStats(s);
 }
 async function worker(s,q){while(q.length>0)await procFile(s,q.shift());}
+
+function sleep(ms){return new Promise(resolve=>setTimeout(resolve,ms));}
+
+async function fetchJson(url, options) {
+  const resp = await fetch(url, options);
+  const text = await resp.text();
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch(_e) {
+    data = {
+      success: false,
+      error: resp.ok ? 'Server returned an unreadable response.' : `Server returned ${resp.status}. Please retry.`
+    };
+  }
+  if(!resp.ok){
+    const err = new Error(data.error || `Request failed (${resp.status})`);
+    err.status = resp.status;
+    err.retryable = RETRY_STATUSES.has(resp.status) || text.trim().startsWith('<');
+    throw err;
+  }
+  return data;
+}
 
 async function procFile(s,i) {
   S[s].results[i].status='processing'; updItemUI(s,i); updStats(s);
@@ -320,17 +344,30 @@ async function procFile(s,i) {
     fd.append('invoice_type',s);
     if(S[s].batchId) fd.append('batch_id',S[s].batchId);
 
-    const resp=await fetch('/pod/process',{method:'POST',body:fd});
-    const data=await resp.json();
+    let data;
+    for(let attempt=0;attempt<=MAX_RETRIES;attempt++){
+      try {
+        S[s].results[i].message=attempt===0?'Extracting...':`Retrying ${attempt}/${MAX_RETRIES}...`;
+        updItemUI(s,i);
+        data=await fetchJson('/pod/process',{method:'POST',body:fd});
+        break;
+      } catch(err) {
+        if(attempt>=MAX_RETRIES || !err.retryable) throw err;
+        await sleep(1200*(attempt+1));
+      }
+    }
 
     if(!data.success) throw new Error(data.error||'Extraction failed');
 
     S[s].results[i].status='done';
     S[s].results[i].filename=data.filename;
+    S[s].results[i].filePath=data.file_path||null;
+    S[s].results[i].message='';
     S[s].blobs[i]=pdfBlob;
   } catch(e) {
     S[s].results[i].status='review';
     S[s].results[i].error=e.message;
+    S[s].results[i].message='';
   }
   updItemUI(s,i); updStats(s);
 }
@@ -377,6 +414,7 @@ async function saveFiles(s) {
   btn.disabled=true; btn.innerHTML='<span class="pod-spin me-1"></span> Saving...';
   try {
     const nc={};let saved=0;
+    const ready=S[s].results.filter((r,i)=>r.status==='done'&&r.filename&&S[s].blobs[i]).length;
     // Create output subfolder structure
     const brandFolders = {'AG':'August Secret','PH':'Prothrive','WH':'Whole Eat','ET':'Etifarm','XX':'Other'};
     for(let i=0;i<S[s].results.length;i++){
@@ -400,7 +438,7 @@ async function saveFiles(s) {
       const wr=await fh.createWritable();
       await wr.write(blob); await wr.close(); saved++;
     }
-    document.getElementById('zsub-'+s).textContent=`${saved} files saved to "${dirHandles[s].name}" with subfolders`;
+    document.getElementById('zsub-'+s).textContent=`${saved} of ${ready} ready files saved to "${dirHandles[s].name}" with subfolders`;
     btn.innerHTML='<i class="bi bi-check-circle me-1"></i> Saved!';
     setTimeout(()=>{btn.disabled=false;btn.innerHTML='<i class="bi bi-download me-1"></i> Save Files';},3000);
   } catch(e){alert('Save error: '+e.message);btn.disabled=false;btn.innerHTML='<i class="bi bi-download me-1"></i> Save Files';}

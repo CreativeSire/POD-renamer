@@ -1,9 +1,10 @@
 import os
 from datetime import timedelta
 
-from flask import Flask, jsonify, redirect, url_for
+from flask import Flask, jsonify, redirect, request, url_for
 from flask_login import LoginManager
 from dotenv import load_dotenv
+from werkzeug.exceptions import HTTPException
 
 load_dotenv()
 
@@ -58,6 +59,18 @@ def create_app():
     @app.errorhandler(413)
     def file_too_large(_error):
         return jsonify({'success': False, 'error': 'Uploaded file is too large.'}), 413
+
+    @app.errorhandler(Exception)
+    def json_api_errors(error):
+        if request.path.startswith('/pod/'):
+            status = error.code if isinstance(error, HTTPException) else 500
+            message = error.description if isinstance(error, HTTPException) else (
+                'Server error while processing this file. Please retry.'
+            )
+            return jsonify({'success': False, 'error': message}), status
+        if isinstance(error, HTTPException):
+            return error
+        raise error
 
     return app
 
