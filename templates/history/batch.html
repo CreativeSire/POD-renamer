@@ -1,22 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Batch: {{ batch.name }}{% block scripts %}
-<script>
-async function reprocess(logId, btn){
-  btn.disabled=true; btn.innerHTML='<span class="spinner-border spinner-border-sm"></span>';
-  try{
-    const r=await fetch('/pod/reprocess/'+logId,{method:'POST'});
-    const d=await r.json();
-    if(d.success){
-      alert('Re-processed: '+d.filename);
-      location.reload();
-    } else {
-      alert('Still needs review: '+d.error);
-      location.reload();
-    }
-  }catch(e){alert('Error: '+e.message); btn.disabled=false; btn.innerHTML='<i class="bi bi-arrow-clockwise"></i>';}
-}
-</script>
-{% endblock %}
+{% block title %}Batch: {{ batch.name }}{% endblock %}
 {% block page_title %}<i class="bi bi-collection me-2 text-primary"></i>{{ batch.name }}{% endblock %}
 
 {% block topbar_actions %}
@@ -221,4 +204,23 @@ async function reprocess(logId, btn){
     {% endif %}
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function reprocess(logId, btn){
+  btn.disabled=true; btn.innerHTML='<span class="spinner-border spinner-border-sm"></span>';
+  try{
+    const r=await fetch('/pod/reprocess/'+logId,{method:'POST'});
+    const d=await r.json();
+    if(d.success){
+      alert('Re-processed: '+d.filename);
+      location.reload();
+    } else {
+      alert('Still needs review: '+d.error);
+      location.reload();
+    }
+  }catch(e){alert('Error: '+e.message); btn.disabled=false; btn.innerHTML='<i class="bi bi-arrow-clockwise"></i>';}
+}
+</script>
 {% endblock %}
