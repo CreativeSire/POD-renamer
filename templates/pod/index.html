@@ -200,6 +200,14 @@ input[type=file] { display:none; }
 <script>
 const CONCURRENCY = 10; // v10
 const MAX_RETRIES = 2;
+
+// Auto-fill batch names on page load
+function autoFillBatchNames(){
+  const today = new Date().toLocaleDateString('en-GB');
+  document.getElementById('batch-name-dala').value = 'DALA - ' + today;
+  document.getElementById('batch-name-brand').value = 'Brand Partners - ' + today;
+}
+document.addEventListener('DOMContentLoaded', autoFillBatchNames);
 const RETRY_STATUSES = new Set([408,409,425,429,500,502,503,504]);
 const S = {
   dala:  { files:[], results:[], blobs:[], batchId:null, folder:'DALA_Renamed' },
