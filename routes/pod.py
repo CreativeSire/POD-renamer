@@ -5,7 +5,7 @@ import re
 import time
 
 import requests
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, jsonify, make_response, render_template, request
 from flask_login import current_user, login_required
 from sqlalchemy import text
 
@@ -233,7 +233,11 @@ def normalize_date(date_text, invoice_type):
 @pod_bp.route('/pod')
 @login_required
 def index():
-    return render_template('pod/index.html')
+    resp = make_response(render_template('pod/index.html'))
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
 
 
 @pod_bp.route('/pod/batch/start', methods=['POST'])

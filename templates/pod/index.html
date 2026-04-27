@@ -196,7 +196,7 @@ input[type=file] { display:none; }
 
 {% block scripts %}
 <script>
-const CONCURRENCY = 10;
+const CONCURRENCY = 10; // v10
 const MAX_RETRIES = 2;
 const RETRY_STATUSES = new Set([408,409,425,429,500,502,503,504]);
 const S = {
