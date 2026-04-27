@@ -78,7 +78,7 @@ def index():
 
         batches = conn.execute(text("""
             SELECT b.id, b.name, b.invoice_type, b.total_files, b.passed, b.review,
-                   b.created_at, u.full_name AS processed_by
+                   b.created_at, u.username AS processed_by
             FROM batches b
             LEFT JOIN users u ON u.id = b.user_id
             ORDER BY b.created_at DESC
@@ -149,7 +149,7 @@ def batch_detail(batch_id):
 
     with get_db() as conn:
         batch = conn.execute(text("""
-            SELECT b.*, u.full_name AS processed_by
+            SELECT b.*, u.username AS processed_by
             FROM batches b LEFT JOIN users u ON u.id = b.user_id
             WHERE b.id = :id
         """), {'id': batch_id}).mappings().fetchone()
