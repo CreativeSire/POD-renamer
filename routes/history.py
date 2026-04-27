@@ -244,21 +244,10 @@ def delete_today():
 @history_bp.route('/admin/backup', methods=['POST'])
 @super_admin_required
 def backup_database():
-    import subprocess
-    import gzip
-    url = os.environ.get('DATABASE_URL', '').replace('postgres://', 'postgresql://', 1)
-    timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-    raw_file = os.path.join(BACKUP_FOLDER, f'backup_{timestamp}.sql')
-    gz_file = raw_file + '.gz'
+    from database.schema import _run_backup
     try:
-        subprocess.run(
-            ['pg_dump', url, '-f', raw_file],
-            check=True, capture_output=True, text=True
-        )
-        with open(raw_file, 'rb') as f_in:
-            with gzip.open(gz_file, 'wb') as f_out:
-                f_out.write(f_in.read())
-        os.remove(raw_file)
+        _run_backup()
+        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
         return jsonify({'success': True, 'file': f'backup_{timestamp}.sql.gz'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

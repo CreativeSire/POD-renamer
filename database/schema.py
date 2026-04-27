@@ -1,11 +1,10 @@
 import os
-import subprocess
 import gzip
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.pool import NullPool
 from werkzeug.security import generate_password_hash
 
@@ -22,25 +21,72 @@ os.makedirs(BACKUP_FOLDER, exist_ok=True)
 _backup_timer = None
 
 
+def _quote_sql(val):
+    """Quote a Python value for SQL INSERT."""
+    if val is None:
+        return 'NULL'
+    if isinstance(val, bool):
+        return 'TRUE' if val else 'FALSE'
+    if isinstance(val, (int, float)):
+        return str(val)
+    if isinstance(val, datetime):
+        return f"'{val.isoformat()}'"
+    # String
+    s = str(val).replace("'", "''")
+    return f"'{s}'"
+
+
 def _run_backup():
-    """Dump the database to a gzip-compressed SQL file."""
+    """Dump the database to a gzip-compressed SQL file using pure Python."""
     url = os.environ.get('DATABASE_URL', '').strip()
     if not url:
         return
-    if url.startswith('postgres://'):
-        url = url.replace('postgres://', 'postgresql://', 1)
+
+    engine = get_engine()
+    inspector = inspect(engine)
     timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-    raw_file = os.path.join(BACKUP_FOLDER, f'backup_{timestamp}.sql')
-    gz_file = raw_file + '.gz'
+    gz_file = os.path.join(BACKUP_FOLDER, f'backup_{timestamp}.sql.gz')
+
+    lines = [
+        f"-- POD Renamer Backup  {timestamp}",
+        f"-- Generated automatically",
+        "",
+        "BEGIN;",
+        "",
+    ]
+
+    # Tables in dependency order (users -> batches -> logs)
+    tables = inspector.get_table_names()
+    # Sort so referenced tables come first
+    order = {'users': 0, 'batches': 1, 'logs': 2}
+    tables.sort(key=lambda t: order.get(t, 99))
+
     try:
-        subprocess.run(
-            ['pg_dump', url, '-f', raw_file],
-            check=True, capture_output=True, text=True
-        )
-        with open(raw_file, 'rb') as f_in:
-            with gzip.open(gz_file, 'wb') as f_out:
-                f_out.write(f_in.read())
-        os.remove(raw_file)  # keep only compressed version
+        with engine.connect() as conn:
+            for table in tables:
+                columns_info = inspector.get_columns(table)
+                if not columns_info:
+                    continue
+                columns = [c['name'] for c in columns_info]
+                col_sql = ', '.join(f'"{c}"' for c in columns)
+
+                lines.append(f"-- Table: {table}")
+                lines.append(f"DELETE FROM \"{table}\";")
+                lines.append("")
+
+                rows = conn.execute(text(f'SELECT * FROM "{table}"')).mappings().fetchall()
+                for row in rows:
+                    vals = ', '.join(_quote_sql(row[c]) for c in columns)
+                    lines.append(f'INSERT INTO "{table}" ({col_sql}) VALUES ({vals});')
+
+                lines.append("")
+
+        lines.append("COMMIT;")
+        lines.append("")
+
+        sql_bytes = '\n'.join(lines).encode('utf-8')
+        with gzip.open(gz_file, 'wb') as f:
+            f.write(sql_bytes)
     except Exception:
         pass
 
