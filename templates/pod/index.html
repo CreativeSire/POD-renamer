@@ -393,6 +393,7 @@ async function fetchJson(url, options) {
   if(!resp.ok){
     const err = new Error(data.error || `Request failed (${resp.status})`);
     err.status = resp.status;
+    err.data = data;
     err.retryable = RETRY_STATUSES.has(resp.status) || text.trim().startsWith('<');
     throw err;
   }
@@ -435,6 +436,10 @@ async function procFile(s,i) {
   } catch(e) {
     S[s].results[i].status='review';
     S[s].results[i].error=e.message;
+    if(e.data&&e.data.filename){
+      S[s].results[i].filename=e.data.filename;
+      S[s].results[i].filePath=e.data.file_path||null;
+    }
     S[s].results[i].message='';
   }
   updItemUI(s,i);
@@ -483,12 +488,12 @@ async function saveFiles(s) {
   btn.disabled=true; btn.innerHTML='<span class="pod-spin me-1"></span> Saving...';
   try {
     const nc={};let saved=0;
-    const ready=S[s].results.filter((r,i)=>r.status==='done'&&r.filename&&S[s].blobs[i]).length;
+    const ready=S[s].results.filter(r=>(r.status==='done'||r.status==='review')&&r.filename).length;
     // Create output subfolder structure
     const brandFolders = {'AG':'August Secret','PH':'Prothrive','WH':'Whole Eat','ET':'Etifarm','XX':'Other'};
     for(let i=0;i<S[s].results.length;i++){
       const r=S[s].results[i]; let blob=S[s].blobs[i];
-      if(r.status!=='done'||!r.filename) continue;
+      if((r.status!=='done'&&r.status!=='review')||!r.filename) continue;
       // Generate blob if missing
       if(!blob){ try { blob=await imgToPdf(S[s].files[i]); S[s].blobs[i]=blob; } catch(_){ continue; } }
       if(!blob) continue;
@@ -496,8 +501,8 @@ async function saveFiles(s) {
       if(nc[name]!==undefined){nc[name]++;const pts=name.split('.');const ext=pts.pop();name=pts.join('.')+' ('+nc[name]+').'+ext;}
       else nc[name]=0;
       // Determine subfolder
-      let subFolder = s==='dala' ? 'DALA' : 'Brand';
-      if(s==='brand'){
+      let subFolder = r.status==='review' ? 'Review' : (s==='dala' ? 'DALA' : 'Brand');
+      if(s==='brand'&&r.status!=='review'){
         const codeMatch = name.match(/\b(AG|PH|WH|ET|XX)-/);
         const code = codeMatch ? codeMatch[1] : 'XX';
         subFolder = brandFolders[code] || code;

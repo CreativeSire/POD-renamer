@@ -93,8 +93,8 @@ def download_batch_zip(batch_id):
     with get_db() as conn:
         batch = conn.execute(text("SELECT name FROM batches WHERE id = :id"), {'id': batch_id}).mappings().fetchone()
         logs = conn.execute(text("""
-            SELECT file_path, renamed_to, file_data FROM logs
-            WHERE batch_id = :id AND status = 'passed'
+            SELECT file_path, renamed_to, status, file_data FROM logs
+            WHERE batch_id = :id AND file_path IS NOT NULL
             ORDER BY created_at ASC
         """), {'id': batch_id}).mappings().fetchall()
 
@@ -107,6 +107,8 @@ def download_batch_zip(batch_id):
         for log in logs:
             path = log['file_path']
             name = log['renamed_to'] or os.path.basename(path or 'pod.pdf')
+            if log['status'] == 'review':
+                name = f'Review/{name}'
             if (not path or not os.path.exists(path)) and not log['file_data']:
                 continue
             # Handle duplicates in zip
