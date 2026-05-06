@@ -249,7 +249,7 @@ function handleFiles(s,fl) {
 }
 function ingest(s,arr) {
   if(!arr.length){alert('No valid image or PDF files found.');return;}
-  S[s].files=arr; S[s].results=arr.map(()=>({status:'waiting',filename:null,error:''})); S[s].blobs=arr.map(()=>null);
+  S[s].files=arr; S[s].results=arr.map(()=>({status:'waiting',filename:null,logId:null,error:''})); S[s].blobs=arr.map(()=>null);
   renderList(s); updStats(s);
   show('stats-'+s); show('ar-'+s);
   document.getElementById('pw-'+s).style.display='block';
@@ -336,7 +336,7 @@ async function processAll(s) {
   const pb=document.getElementById('pb-'+s);
   pb.disabled=true; pb.innerHTML='<span class="pod-spin me-1"></span> Processing...';
   document.getElementById('zs-'+s).style.cssText='display:none!important;';
-  S[s].results.forEach(r=>{r.status='waiting';r.filename=null;r.error='';r.message='';r.filePath=null;});
+  S[s].results.forEach(r=>{r.status='waiting';r.filename=null;r.logId=null;r.error='';r.message='';r.filePath=null;});
   S[s].blobs=S[s].files.map(()=>null);
   renderList(s); updStats(s);
 
@@ -424,19 +424,20 @@ async function procFile(s,i) {
 
     if(!data.success) throw new Error(data.error||'Extraction failed');
 
-    S[s].results[i].message='Preparing PDF...';
-    updItemUI(s,i);
-    const pdfBlob=await imgToPdf(f);
-
     S[s].results[i].status='done';
+    S[s].results[i].logId=data.log_id||null;
     S[s].results[i].filename=data.filename;
     S[s].results[i].filePath=data.file_path||null;
+    S[s].results[i].message='Preparing PDF...';
+    updItemUI(s,i);
+    try { S[s].blobs[i]=await imgToPdf(f); }
+    catch(_){ S[s].blobs[i]=null; }
     S[s].results[i].message='';
-    S[s].blobs[i]=pdfBlob;
   } catch(e) {
     S[s].results[i].status='review';
     S[s].results[i].error=e.message;
     if(e.data&&e.data.filename){
+      S[s].results[i].logId=e.data.log_id||null;
       S[s].results[i].filename=e.data.filename;
       S[s].results[i].filePath=e.data.file_path||null;
     }
@@ -473,6 +474,13 @@ async function imgToPdf(file) {
   });
 }
 
+async function serverBlobForResult(r) {
+  if(!r.logId) return null;
+  const resp=await fetch(`/files/download/${r.logId}`);
+  if(!resp.ok) return null;
+  return await resp.blob();
+}
+
 // ── Folder picker + save ─────────────────────────────────────
 async function pickFolder(s) {
   try {
@@ -487,16 +495,22 @@ async function saveFiles(s) {
   const btn=document.getElementById('save-btn-'+s);
   btn.disabled=true; btn.innerHTML='<span class="pod-spin me-1"></span> Saving...';
   try {
-    const nc={};let saved=0;
+    const nc={};let saved=0;const failed=[];
     const ready=S[s].results.filter(r=>(r.status==='done'||r.status==='review')&&r.filename).length;
     // Create output subfolder structure
     const brandFolders = {'AG':'August Secret','PH':'Prothrive','WH':'Whole Eat','ET':'Etifarm','XX':'Other'};
     for(let i=0;i<S[s].results.length;i++){
       const r=S[s].results[i]; let blob=S[s].blobs[i];
       if((r.status!=='done'&&r.status!=='review')||!r.filename) continue;
-      // Generate blob if missing
-      if(!blob){ try { blob=await imgToPdf(S[s].files[i]); S[s].blobs[i]=blob; } catch(_){ continue; } }
-      if(!blob) continue;
+      // Generate blob if missing; fall back to the backend-stored output.
+      if(!blob){
+        try { blob=await imgToPdf(S[s].files[i]); S[s].blobs[i]=blob; }
+        catch(_){ blob=await serverBlobForResult(r); }
+      }
+      if(!blob){
+        failed.push(r.filename);
+        continue;
+      }
       let name=r.filename;
       if(nc[name]!==undefined){nc[name]++;const pts=name.split('.');const ext=pts.pop();name=pts.join('.')+' ('+nc[name]+').'+ext;}
       else nc[name]=0;
@@ -511,12 +525,21 @@ async function saveFiles(s) {
       let rootHandle = dirHandles[s];
       try { rootHandle = await rootHandle.getDirectoryHandle(subFolder, {create:true}); }
       catch(e) { /* keep root if fails */ }
-      const fh=await rootHandle.getFileHandle(name,{create:true});
-      const wr=await fh.createWritable();
-      await wr.write(blob); await wr.close(); saved++;
+      try {
+        const fh=await rootHandle.getFileHandle(name,{create:true});
+        const wr=await fh.createWritable();
+        await wr.write(blob); await wr.close(); saved++;
+      } catch(e) {
+        failed.push(`${name}: ${e.message||'write failed'}`);
+      }
     }
     document.getElementById('zsub-'+s).textContent=`${saved} of ${ready} ready files saved to "${dirHandles[s].name}" with subfolders`;
-    btn.innerHTML='<i class="bi bi-check-circle me-1"></i> Saved!';
+    if(failed.length){
+      alert(`Saved ${saved} of ${ready}. Missing ${failed.length} file(s):\n\n${failed.slice(0,10).join('\n')}${failed.length>10?'\n...':''}`);
+      btn.innerHTML='<i class="bi bi-exclamation-triangle me-1"></i> Partial Save';
+    } else {
+      btn.innerHTML='<i class="bi bi-check-circle me-1"></i> Saved!';
+    }
     setTimeout(()=>{btn.disabled=false;btn.innerHTML='<i class="bi bi-download me-1"></i> Save Files';},3000);
   } catch(e){alert('Save error: '+e.message);btn.disabled=false;btn.innerHTML='<i class="bi bi-download me-1"></i> Save Files';}
 }

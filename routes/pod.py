@@ -344,22 +344,25 @@ def process():
     # Always save the file to server storage (passed or review)
     storage_bytes = make_storage_pdf(file_bytes, mime_type) if status == 'passed' else file_bytes
     saved_path = save_uploaded_file(batch_id, invoice_type, brand_code, storage_bytes, new_name)
+    log_id = None
 
     if batch_id:
         with get_db() as conn:
-            conn.execute(text("""
+            row = conn.execute(text("""
                 INSERT INTO logs (batch_id, original_name, renamed_to, store_name, location,
                                   invoice_number, invoice_date, brand_code, invoice_type,
                                   status, error_message, file_path, file_data)
                 VALUES (:bid, :orig, :renamed, :store, :loc, :inv, :date, :brand, :type,
                         :status, :err, :fpath, :fdata)
+                RETURNING id
             """), {
                 'bid': batch_id, 'orig': file.filename, 'renamed': new_name,
                 'store': store, 'loc': loc, 'inv': inv, 'date': date,
                 'brand': brand_code, 'type': invoice_type,
                 'status': status, 'err': error_msg, 'fpath': saved_path,
                 'fdata': storage_bytes,
-            })
+            }).fetchone()
+            log_id = row[0] if row else None
             conn.execute(text("""
                 UPDATE batches SET
                     total_files = total_files + 1,
@@ -374,10 +377,18 @@ def process():
             conn.commit()
 
     if status == 'review':
-        return jsonify({'success': False, 'error': error_msg, 'status': 'review', 'filename': new_name, 'file_path': saved_path}), 422
+        return jsonify({
+            'success': False,
+            'error': error_msg,
+            'status': 'review',
+            'filename': new_name,
+            'file_path': saved_path,
+            'log_id': log_id,
+        }), 422
 
     return jsonify({
         'success': True,
+        'log_id': log_id,
         'filename': new_name,
         'original': file.filename,
         'store': store,
@@ -553,22 +564,25 @@ def process_batch():
 
         storage_bytes = make_storage_pdf(file_bytes, mime_type) if status == 'passed' else file_bytes
         saved_path = save_uploaded_file(batch_id, invoice_type, brand_code, storage_bytes, new_name)
+        log_id = None
 
         if batch_id:
             with get_db() as conn:
-                conn.execute(text("""
+                row = conn.execute(text("""
                     INSERT INTO logs (batch_id, original_name, renamed_to, store_name, location,
                                       invoice_number, invoice_date, brand_code, invoice_type,
                                       status, error_message, file_path, file_data)
                     VALUES (:bid, :orig, :renamed, :store, :loc, :inv, :date, :brand, :type,
                             :status, :err, :fpath, :fdata)
+                    RETURNING id
                 """), {
                     'bid': batch_id, 'orig': file.filename, 'renamed': new_name,
                     'store': store, 'loc': loc, 'inv': inv, 'date': date,
                     'brand': brand_code, 'type': invoice_type,
                     'status': status, 'err': error_msg, 'fpath': saved_path,
                     'fdata': storage_bytes,
-                })
+                }).fetchone()
+                log_id = row[0] if row else None
                 conn.execute(text("""
                     UPDATE batches SET
                         total_files = total_files + 1,
@@ -584,6 +598,7 @@ def process_batch():
 
         results.append({
             'success': status == 'passed',
+            'log_id': log_id,
             'filename': new_name,
             'original': file.filename,
             'status': status,

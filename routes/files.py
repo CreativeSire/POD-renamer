@@ -17,7 +17,8 @@ def browser():
             SELECT b.id, b.name, b.invoice_type, b.created_at,
                    COUNT(l.id) as file_count
             FROM batches b
-            LEFT JOIN logs l ON l.batch_id = b.id AND l.file_path IS NOT NULL
+            LEFT JOIN logs l ON l.batch_id = b.id
+                AND (l.file_path IS NOT NULL OR l.file_data IS NOT NULL)
             GROUP BY b.id
             ORDER BY b.created_at DESC
         """)).mappings().fetchall()
@@ -41,7 +42,7 @@ def batch_files(batch_id):
             SELECT id, original_name, renamed_to, store_name, location,
                    invoice_number, invoice_date, brand_code, status, file_path
             FROM logs
-            WHERE batch_id = :id AND file_path IS NOT NULL
+            WHERE batch_id = :id AND (file_path IS NOT NULL OR file_data IS NOT NULL)
             ORDER BY created_at ASC
         """), {'id': batch_id}).mappings().fetchall()
 
@@ -94,7 +95,7 @@ def download_batch_zip(batch_id):
         batch = conn.execute(text("SELECT name FROM batches WHERE id = :id"), {'id': batch_id}).mappings().fetchone()
         logs = conn.execute(text("""
             SELECT file_path, renamed_to, status, file_data FROM logs
-            WHERE batch_id = :id AND file_path IS NOT NULL
+            WHERE batch_id = :id AND (file_path IS NOT NULL OR file_data IS NOT NULL)
             ORDER BY created_at ASC
         """), {'id': batch_id}).mappings().fetchall()
 
