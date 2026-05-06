@@ -251,3 +251,84 @@ def backup_database():
         return jsonify({'success': True, 'file': f'backup_{timestamp}.sql.gz'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@history_bp.route('/admin/audit')
+@super_admin_required
+def audit_batches():
+    limit = request.args.get('limit', 25, type=int)
+    limit = max(1, min(limit, 100))
+
+    with get_db() as conn:
+        batches = conn.execute(text("""
+            SELECT b.id, b.name, b.invoice_type, b.created_at, b.total_files, b.passed, b.review,
+                   u.username AS processed_by,
+                   COUNT(l.id) AS log_count,
+                   COUNT(*) FILTER (WHERE l.status = 'passed') AS log_passed,
+                   COUNT(*) FILTER (WHERE l.status = 'review') AS log_review,
+                   COUNT(*) FILTER (WHERE l.status = 'passed'
+                                    AND (l.file_path IS NOT NULL OR l.file_data IS NOT NULL)) AS zip_ready,
+                   COUNT(*) FILTER (WHERE l.status = 'review'
+                                    AND (l.file_path IS NOT NULL OR l.file_data IS NOT NULL)) AS review_ready,
+                   COUNT(*) FILTER (WHERE l.file_path IS NULL AND l.file_data IS NULL) AS no_output_copy
+            FROM batches b
+            LEFT JOIN logs l ON l.batch_id = b.id
+            LEFT JOIN users u ON u.id = b.user_id
+            GROUP BY b.id, u.username
+            ORDER BY b.created_at DESC
+            LIMIT :limit
+        """), {'limit': limit}).mappings().fetchall()
+
+        batch_ids = [row['id'] for row in batches]
+        rows_by_batch = {}
+        if batch_ids:
+            logs = conn.execute(text("""
+                SELECT batch_id, id, status, original_name, renamed_to, file_path,
+                       file_data IS NOT NULL AS has_file_data, created_at
+                FROM logs
+                WHERE batch_id = ANY(:batch_ids)
+                ORDER BY batch_id DESC, created_at ASC
+            """), {'batch_ids': batch_ids}).mappings().fetchall()
+            for log in logs:
+                rows_by_batch.setdefault(log['batch_id'], []).append(dict(log))
+
+    report = []
+    for row in batches:
+        batch = dict(row)
+        logs = rows_by_batch.get(batch['id'], [])
+        missing_disk = 0
+        missing_any_copy = 0
+        file_rows = []
+        for log in logs:
+            exists_on_disk = bool(log.get('file_path') and os.path.exists(log['file_path']))
+            has_db_copy = bool(log.get('has_file_data'))
+            if log.get('file_path') and not exists_on_disk:
+                missing_disk += 1
+            if not exists_on_disk and not has_db_copy:
+                missing_any_copy += 1
+            file_rows.append({
+                'id': log['id'],
+                'status': log['status'],
+                'original': log['original_name'],
+                'renamed': log['renamed_to'],
+                'has_path': bool(log.get('file_path')),
+                'exists_on_disk': exists_on_disk,
+                'has_db_copy': has_db_copy,
+            })
+
+        expected_total = batch['log_count']
+        output_ready = batch['zip_ready'] + batch['review_ready']
+        batch['created_at'] = batch['created_at'].isoformat() if batch['created_at'] else None
+        batch['output_ready'] = output_ready
+        batch['missing_disk_copy'] = missing_disk
+        batch['missing_any_copy'] = missing_any_copy
+        batch['count_mismatch'] = (
+            batch['total_files'] != expected_total
+            or batch['passed'] != batch['log_passed']
+            or batch['review'] != batch['log_review']
+            or missing_any_copy > 0
+        )
+        batch['files'] = file_rows
+        report.append(batch)
+
+    return jsonify({'success': True, 'batches': report})
