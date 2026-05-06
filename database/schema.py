@@ -175,12 +175,14 @@ def init_db():
                 status VARCHAR(20) DEFAULT 'passed',
                 error_message TEXT,
                 file_path VARCHAR(1000),
+                file_data BYTEA,
                 created_at TIMESTAMP DEFAULT NOW()
             )
         """))
 
         # Keep older Railway databases in step with newer deployments.
         conn.execute(text("ALTER TABLE logs ADD COLUMN IF NOT EXISTS file_path VARCHAR(1000)"))
+        conn.execute(text("ALTER TABLE logs ADD COLUMN IF NOT EXISTS file_data BYTEA"))
 
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_logs_batch ON logs(batch_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_logs_status ON logs(status)"))

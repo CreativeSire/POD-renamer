@@ -68,15 +68,23 @@ def batch_files(batch_id):
 def download_file(log_id):
     with get_db() as conn:
         row = conn.execute(text("""
-            SELECT file_path, renamed_to FROM logs WHERE id = :id
+            SELECT file_path, renamed_to, file_data FROM logs WHERE id = :id
         """), {'id': log_id}).mappings().fetchone()
 
-    if not row or not row['file_path'] or not os.path.exists(row['file_path']):
+    if not row:
         abort(404)
 
-    return send_file(row['file_path'],
-                     as_attachment=True,
-                     download_name=row['renamed_to'] or os.path.basename(row['file_path']))
+    download_name = row['renamed_to'] or os.path.basename(row['file_path'] or 'pod.pdf')
+    if row['file_path'] and os.path.exists(row['file_path']):
+        return send_file(row['file_path'], as_attachment=True, download_name=download_name)
+
+    if row['file_data']:
+        return send_file(io.BytesIO(bytes(row['file_data'])),
+                         mimetype='application/pdf' if download_name.lower().endswith('.pdf') else 'application/octet-stream',
+                         as_attachment=True,
+                         download_name=download_name)
+
+    abort(404)
 
 
 @files_bp.route('/files/batch/<int:batch_id>/zip')
@@ -85,8 +93,8 @@ def download_batch_zip(batch_id):
     with get_db() as conn:
         batch = conn.execute(text("SELECT name FROM batches WHERE id = :id"), {'id': batch_id}).mappings().fetchone()
         logs = conn.execute(text("""
-            SELECT file_path, renamed_to FROM logs
-            WHERE batch_id = :id AND file_path IS NOT NULL AND status = 'passed'
+            SELECT file_path, renamed_to, file_data FROM logs
+            WHERE batch_id = :id AND status = 'passed'
             ORDER BY created_at ASC
         """), {'id': batch_id}).mappings().fetchall()
 
@@ -98,8 +106,8 @@ def download_batch_zip(batch_id):
         seen = {}
         for log in logs:
             path = log['file_path']
-            name = log['renamed_to'] or os.path.basename(path)
-            if not path or not os.path.exists(path):
+            name = log['renamed_to'] or os.path.basename(path or 'pod.pdf')
+            if (not path or not os.path.exists(path)) and not log['file_data']:
                 continue
             # Handle duplicates in zip
             zip_name = name
@@ -109,7 +117,10 @@ def download_batch_zip(batch_id):
                 zip_name = f'{base} ({seen[zip_name]}){ext}'
             else:
                 seen[zip_name] = 0
-            zf.write(path, zip_name)
+            if path and os.path.exists(path):
+                zf.write(path, zip_name)
+            else:
+                zf.writestr(zip_name, bytes(log['file_data']))
 
     memory_file.seek(0)
     safe_name = batch['name'].replace(' ', '_').replace('/', '_')

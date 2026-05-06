@@ -16,6 +16,7 @@ from database.schema import get_db, UPLOAD_FOLDER
 
 pod_bp = Blueprint('pod', __name__)
 _thread_local = threading.local()
+_file_save_lock = threading.Lock()
 
 GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
 DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash'
@@ -92,14 +93,14 @@ def save_uploaded_file(batch_id, invoice_type, brand_code, file_bytes, filename)
     os.makedirs(target_dir, exist_ok=True)
     safe_name = clean(filename)
     file_path = os.path.join(target_dir, safe_name)
-    # Handle duplicates
-    base, ext = os.path.splitext(file_path)
-    counter = 1
-    while os.path.exists(file_path):
-        file_path = f'{base} ({counter}){ext}'
-        counter += 1
-    with open(file_path, 'wb') as f:
-        f.write(file_bytes)
+    with _file_save_lock:
+        base, ext = os.path.splitext(file_path)
+        counter = 1
+        while os.path.exists(file_path):
+            file_path = f'{base} ({counter}){ext}'
+            counter += 1
+        with open(file_path, 'wb') as f:
+            f.write(file_bytes)
     return file_path
 
 
@@ -348,13 +349,16 @@ def process():
         with get_db() as conn:
             conn.execute(text("""
                 INSERT INTO logs (batch_id, original_name, renamed_to, store_name, location,
-                                  invoice_number, invoice_date, brand_code, invoice_type, status, error_message, file_path)
-                VALUES (:bid, :orig, :renamed, :store, :loc, :inv, :date, :brand, :type, :status, :err, :fpath)
+                                  invoice_number, invoice_date, brand_code, invoice_type,
+                                  status, error_message, file_path, file_data)
+                VALUES (:bid, :orig, :renamed, :store, :loc, :inv, :date, :brand, :type,
+                        :status, :err, :fpath, :fdata)
             """), {
                 'bid': batch_id, 'orig': file.filename, 'renamed': new_name,
                 'store': store, 'loc': loc, 'inv': inv, 'date': date,
                 'brand': brand_code, 'type': invoice_type,
                 'status': status, 'err': error_msg, 'fpath': saved_path,
+                'fdata': storage_bytes,
             })
             conn.execute(text("""
                 UPDATE batches SET
@@ -389,7 +393,7 @@ def process():
 def reprocess_log(log_id):
     with get_db() as conn:
         log = conn.execute(text("""
-            SELECT id, batch_id, original_name, invoice_type, file_path
+            SELECT id, batch_id, original_name, invoice_type, file_path, file_data
             FROM logs WHERE id = :id
         """), {'id': log_id}).mappings().fetchone()
 
@@ -400,11 +404,14 @@ def reprocess_log(log_id):
     invoice_type = log['invoice_type']
 
     # Read stored file
-    if not log['file_path'] or not os.path.exists(log['file_path']):
+    if (not log['file_path'] or not os.path.exists(log['file_path'])) and not log['file_data']:
         return jsonify({'success': False, 'error': 'Original file not found on server.'}), 404
 
-    with open(log['file_path'], 'rb') as f:
-        file_bytes = f.read()
+    if log['file_path'] and os.path.exists(log['file_path']):
+        with open(log['file_path'], 'rb') as f:
+            file_bytes = f.read()
+    else:
+        file_bytes = bytes(log['file_data'])
 
     # Successful stored outputs are PDFs even when the original upload was an image.
     ext = os.path.splitext((log['file_path'] or log['original_name']).lower())[1]
@@ -461,12 +468,14 @@ def reprocess_log(log_id):
                 brand_code = :brand,
                 status = :status,
                 error_message = :err,
-                file_path = :fpath
+                file_path = :fpath,
+                file_data = :fdata
             WHERE id = :id
         """), {
             'id': log_id, 'renamed': new_name, 'store': store, 'loc': loc,
             'inv': inv, 'date': date, 'brand': brand_code,
             'status': status, 'err': error_msg, 'fpath': saved_path,
+            'fdata': storage_bytes if status == 'passed' else file_bytes,
         })
         conn.commit()
 
@@ -549,13 +558,16 @@ def process_batch():
             with get_db() as conn:
                 conn.execute(text("""
                     INSERT INTO logs (batch_id, original_name, renamed_to, store_name, location,
-                                      invoice_number, invoice_date, brand_code, invoice_type, status, error_message, file_path)
-                    VALUES (:bid, :orig, :renamed, :store, :loc, :inv, :date, :brand, :type, :status, :err, :fpath)
+                                      invoice_number, invoice_date, brand_code, invoice_type,
+                                      status, error_message, file_path, file_data)
+                    VALUES (:bid, :orig, :renamed, :store, :loc, :inv, :date, :brand, :type,
+                            :status, :err, :fpath, :fdata)
                 """), {
                     'bid': batch_id, 'orig': file.filename, 'renamed': new_name,
                     'store': store, 'loc': loc, 'inv': inv, 'date': date,
                     'brand': brand_code, 'type': invoice_type,
                     'status': status, 'err': error_msg, 'fpath': saved_path,
+                    'fdata': storage_bytes,
                 })
                 conn.execute(text("""
                     UPDATE batches SET
