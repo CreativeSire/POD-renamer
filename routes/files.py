@@ -9,6 +9,24 @@ from sqlalchemy import text
 files_bp = Blueprint('files', __name__)
 
 
+def unique_archive_name(seen, name):
+    """Return a ZIP name that will not collapse on Windows extraction."""
+    normalized = name.replace('\\', '/').casefold()
+    if normalized not in seen:
+        seen.add(normalized)
+        return name
+
+    base, ext = os.path.splitext(name)
+    counter = 1
+    while True:
+        candidate = f'{base} ({counter}){ext}'
+        candidate_key = candidate.replace('\\', '/').casefold()
+        if candidate_key not in seen:
+            seen.add(candidate_key)
+            return candidate
+        counter += 1
+
+
 @files_bp.route('/files')
 @login_required
 def browser():
@@ -104,7 +122,7 @@ def download_batch_zip(batch_id):
 
     memory_file = io.BytesIO()
     with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
-        seen = {}
+        seen = set()
         for log in logs:
             path = log['file_path']
             name = log['renamed_to'] or os.path.basename(path or 'pod.pdf')
@@ -112,14 +130,8 @@ def download_batch_zip(batch_id):
                 name = f'Review/{name}'
             if (not path or not os.path.exists(path)) and not log['file_data']:
                 continue
-            # Handle duplicates in zip
-            zip_name = name
-            if zip_name in seen:
-                seen[zip_name] += 1
-                base, ext = os.path.splitext(zip_name)
-                zip_name = f'{base} ({seen[zip_name]}){ext}'
-            else:
-                seen[zip_name] = 0
+            # Handle exact and case-only duplicates so Windows does not merge files.
+            zip_name = unique_archive_name(seen, name)
             if path and os.path.exists(path):
                 zf.write(path, zip_name)
             else:
