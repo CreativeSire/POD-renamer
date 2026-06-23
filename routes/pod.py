@@ -261,11 +261,23 @@ If a history name fixes a spelling variant, return the corrected supermarket/loc
 Return ONLY raw JSON: {{"valid":true,"reason":"short explanation","supermarket":"...","location":"...","invoice":"...","date":"..."}}.'''
 
 
+def should_use_history(verification):
+    """Historical matches are a fallback, never the first source of truth."""
+    return verification.get('valid') is not True
+
+
 def extract_document(file_bytes, mime_type, invoice_type):
     prompt = DALA_PROMPT if invoice_type == 'dala' else BRAND_PROMPT
     parsed = validate_extraction(call_gemini(file_bytes, mime_type, prompt), invoice_type)
-    history_candidates = get_history_candidates(invoice_type, parsed['supermarket'], parsed['location'])
-    verification = call_gemini(file_bytes, mime_type, verification_prompt(invoice_type, parsed, history_candidates))
+    verification = call_gemini(file_bytes, mime_type, verification_prompt(invoice_type, parsed))
+    if should_use_history(verification):
+        history_candidates = get_history_candidates(invoice_type, parsed['supermarket'], parsed['location'])
+        if history_candidates:
+            verification = call_gemini(
+                file_bytes,
+                mime_type,
+                verification_prompt(invoice_type, parsed, history_candidates),
+            )
     if verification.get('valid') is not True:
         reason = clean(verification.get('reason', 'Document values could not be verified.'))
         raise ValueError(f'Quality check failed: {reason}')
