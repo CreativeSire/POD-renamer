@@ -1,4 +1,5 @@
 import base64
+from datetime import datetime
 from io import BytesIO
 import json
 import os
@@ -9,7 +10,7 @@ import time
 import requests
 from flask import Blueprint, jsonify, make_response, render_template, request
 from flask_login import current_user, login_required
-from PIL import Image, ImageOps
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 from sqlalchemy import text
 
 from database.schema import get_db, UPLOAD_FOLDER
@@ -48,6 +49,8 @@ BRAND_FOLDER_MAP = {
     'XX': 'Other',
 }
 
+MAX_OCR_IMAGE_DIMENSION = 2600
+
 DALA_PROMPT = """You are reading a DALA Technologies delivery invoice or handwritten Proof of Delivery note.
 
 Extract exactly these 4 fields:
@@ -55,6 +58,10 @@ Extract exactly these 4 fields:
 2. location: Delivery area - 1-2 words only, NOT full address. Examples: "Osapa", "Ikeja", "Egbeda", "Alakuko"
 3. invoice: Invoice number digits only - strip N0-, NO-, DT- prefixes. From "N0-035263" return "035263"
 4. date: Delivery date as DD-MM-YYYY from the printed top-right "Dated" field. Ignore received stamps, signatures, or handwritten dates. Example: "26-02-2026"
+
+Read only what is visible in the document. Never infer or invent a value. If a
+field is ambiguous, return an empty string so the file can be reviewed rather
+than renamed incorrectly. Verify the invoice number and printed date twice.
 
 Return ONLY raw JSON, never leave a field empty, location 1-2 words max:
 {"supermarket":"...","location":"...","invoice":"...","date":"..."}"""
@@ -67,6 +74,10 @@ Extract exactly these 5 fields:
 3. location: Delivery area - 1-2 words only. Look at ADDRESS or near store name.
 4. invoice: Invoice/receipt number - digits only, strip any prefixes. e.g. "06081"
 5. date: Date as DDMMYY (6 digits) from the printed top-right invoice date. Ignore received stamps, signatures, or handwritten dates. e.g. 25 Feb 2026 = "250226"
+
+Read only what is visibly printed; do not infer missing values. If a field is
+ambiguous, return an empty string. Verify the invoice number and printed date
+twice before responding.
 
 Return ONLY raw JSON, never leave a field empty, location 1-2 words max:
 {"brand":"...","supermarket":"...","location":"...","invoice":"...","date":"..."}"""
@@ -125,6 +136,99 @@ def infer_mime_type(file):
     return mime_type
 
 
+def prepare_document_for_ai(file_bytes, mime_type):
+    """Normalize photos before visual extraction while leaving PDFs intact."""
+    if not mime_type.startswith('image/'):
+        return file_bytes, mime_type
+
+    try:
+        with Image.open(BytesIO(file_bytes)) as image:
+            image = ImageOps.exif_transpose(image)
+            if image.mode in ('RGBA', 'LA', 'P'):
+                background = Image.new('RGB', image.size, 'white')
+                if image.mode == 'P':
+                    image = image.convert('RGBA')
+                background.paste(image, mask=image.getchannel('A') if image.mode == 'RGBA' else None)
+                image = background
+            elif image.mode != 'RGB':
+                image = image.convert('RGB')
+
+            image.thumbnail((MAX_OCR_IMAGE_DIMENSION, MAX_OCR_IMAGE_DIMENSION), Image.Resampling.LANCZOS)
+            image = ImageOps.autocontrast(image, cutoff=1)
+            image = ImageEnhance.Contrast(image).enhance(1.12)
+            image = image.filter(ImageFilter.UnsharpMask(radius=1.2, percent=120, threshold=3))
+
+            output = BytesIO()
+            image.save(output, format='JPEG', quality=92, optimize=True)
+            return output.getvalue(), 'image/jpeg'
+    except (OSError, ValueError) as exc:
+        raise ValueError(f'Unable to read image safely: {exc}') from exc
+
+
+def validate_extraction(parsed, invoice_type):
+    """Enforce filename-safe, verifiable values before a file can pass."""
+    store = clean(parsed.get('supermarket', ''))
+    location = clean(parsed.get('location', ''))
+    invoice = re.sub(r'^(N0|NO|DT|AG|PH|WH|MT|ET)-?', '', clean(parsed.get('invoice', '')), flags=re.IGNORECASE)
+    invoice = re.sub(r'\s+', '', invoice)
+    date = normalize_date(parsed.get('date', ''), invoice_type)
+
+    if len(re.findall(r'[A-Za-z0-9]', store)) < 2:
+        raise ValueError('Store name is missing or unreadable.')
+    if len(re.findall(r'[A-Za-z0-9]', location)) < 2:
+        raise ValueError('Location is missing or unreadable.')
+    if invoice_type == 'dala':
+        # DALA delivery invoices use the six-digit number in the printed N0/NO field.
+        # Longer OCR strings are usually a merged receipt, phone number, or stamp.
+        if not re.fullmatch(r'\d{6}', invoice):
+            raise ValueError('DALA invoice number must contain exactly 6 digits.')
+        if not re.fullmatch(r'\d{2}-\d{2}-\d{4}', date):
+            raise ValueError('DALA date must be DD-MM-YYYY.')
+        try:
+            datetime.strptime(date, '%d-%m-%Y')
+        except ValueError as exc:
+            raise ValueError('DALA date is not a valid calendar date.') from exc
+    else:
+        if not re.fullmatch(r'\d{3,12}', invoice):
+            raise ValueError('Brand invoice number must contain 3-12 digits only.')
+        if not re.fullmatch(r'\d{6}', date):
+            raise ValueError('Brand date must be DDMMYY.')
+        try:
+            datetime.strptime(date, '%d%m%y')
+        except ValueError as exc:
+            raise ValueError('Brand date is not a valid calendar date.') from exc
+
+    result = {'supermarket': store, 'location': location, 'invoice': invoice, 'date': date}
+    if invoice_type == 'brand':
+        result['brand'] = clean(parsed.get('brand', ''))
+    return result
+
+
+def verification_prompt(invoice_type, parsed):
+    fields = ['supermarket', 'location', 'invoice', 'date']
+    if invoice_type == 'brand':
+        fields.insert(0, 'brand')
+    candidate = {field: parsed.get(field, '') for field in fields}
+    return f'''You are the final quality-control verifier for a delivery invoice.
+Inspect the supplied document yourself and compare it against this candidate extraction:
+{json.dumps(candidate, ensure_ascii=False)}
+
+Approve only if every candidate value is visibly supported by the correct printed
+invoice field. Reject guesses, receipt stamps, handwritten received dates, address
+fragments used as locations, and any disagreement in invoice digits or date.
+Return ONLY raw JSON: {{"valid":true,"reason":"short explanation"}}.'''
+
+
+def extract_document(file_bytes, mime_type, invoice_type):
+    prompt = DALA_PROMPT if invoice_type == 'dala' else BRAND_PROMPT
+    parsed = validate_extraction(call_gemini(file_bytes, mime_type, prompt), invoice_type)
+    verification = call_gemini(file_bytes, mime_type, verification_prompt(invoice_type, parsed))
+    if verification.get('valid') is not True:
+        reason = clean(verification.get('reason', 'Document values could not be verified.'))
+        raise ValueError(f'Quality check failed: {reason}')
+    return parsed
+
+
 def gemini_error_message(resp):
     try:
         data = resp.json()
@@ -158,11 +262,12 @@ def call_gemini(file_bytes, mime_type, prompt):
     if not models:
         models = [DEFAULT_GEMINI_MODEL]
 
+    ai_bytes, ai_mime_type = prepare_document_for_ai(file_bytes, mime_type)
     payload = {
         'contents': [{'parts': [
             {'inline_data': {
-                'mime_type': mime_type,
-                'data': base64.b64encode(file_bytes).decode('utf-8'),
+                'mime_type': ai_mime_type,
+                'data': base64.b64encode(ai_bytes).decode('utf-8'),
             }},
             {'text': prompt},
         ]}],
@@ -311,8 +416,7 @@ def process():
     saved_path = None
 
     try:
-        prompt = DALA_PROMPT if invoice_type == 'dala' else BRAND_PROMPT
-        parsed = call_gemini(file_bytes, mime_type, prompt)
+        parsed = extract_document(file_bytes, mime_type, invoice_type)
 
         store = clean(parsed.get('supermarket', ''))
         loc = clean(parsed.get('location', ''))
@@ -434,8 +538,7 @@ def reprocess_log(log_id):
     saved_path = log['file_path']
 
     try:
-        prompt = DALA_PROMPT if invoice_type == 'dala' else BRAND_PROMPT
-        parsed = call_gemini(file_bytes, mime_type, prompt)
+        parsed = extract_document(file_bytes, mime_type, invoice_type)
 
         store = clean(parsed.get('supermarket', ''))
         loc = clean(parsed.get('location', ''))
@@ -532,8 +635,7 @@ def process_batch():
         saved_path = None
 
         try:
-            prompt = DALA_PROMPT if invoice_type == 'dala' else BRAND_PROMPT
-            parsed = call_gemini(file_bytes, mime_type, prompt)
+            parsed = extract_document(file_bytes, mime_type, invoice_type)
 
             store = clean(parsed.get('supermarket', ''))
             loc = clean(parsed.get('location', ''))

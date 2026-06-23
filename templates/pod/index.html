@@ -203,8 +203,9 @@ input[type=file] { display:none; }
 
 {% block scripts %}
 <script>
-const CONCURRENCY = 20;
-const MAX_ACTIVE_REQUESTS = 20;
+// Each file is extracted and independently verified; keep the provider queue stable.
+const CONCURRENCY = 6;
+const MAX_ACTIVE_REQUESTS = 6;
 const MAX_RETRIES = 2;
 
 // Auto-fill batch names on page load
@@ -275,7 +276,7 @@ function updItemUI(s,i) {
   el.className='pod-fi '+r.status;
   if(r.status==='waiting'){fn.textContent='Waiting...';bs.className='badge bg-secondary';bs.textContent='Waiting';}
   else if(r.status==='processing'){fn.innerHTML=`<span class="text-warning">${esc(r.message||'Extracting...')}</span>`;bs.className='badge bg-warning text-dark';bs.innerHTML='<div class="pod-spin"></div>';}
-  else if(r.status==='done'){fn.textContent=r.filename;bs.className='badge bg-success';bs.textContent='Passed';}
+  else if(r.status==='done'){fn.textContent=r.filename;bs.className='badge bg-success';bs.textContent='Verified';}
   else{fn.innerHTML=`<span class="text-danger small">${esc(r.error)}</span>`;bs.className='badge bg-danger';bs.textContent='Review';}
 }
 function updStats(s) {
@@ -412,7 +413,7 @@ async function procFile(s,i) {
     let data;
     for(let attempt=0; attempt<=MAX_RETRIES; attempt++){
       try {
-        S[s].results[i].message=attempt===0?'Extracting...':`Retrying ${attempt}/${MAX_RETRIES}...`;
+        S[s].results[i].message=attempt===0?'Extracting and verifying...':`Retrying ${attempt}/${MAX_RETRIES}...`;
         updItemUI(s,i);
         data=await withRequestSlot(()=>fetchJson('/pod/process',{method:'POST',body:fd}));
         break;
