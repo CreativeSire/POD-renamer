@@ -179,10 +179,18 @@
         <!-- Pagination -->
         {% if total_pages > 1 %}
         <div class="d-flex justify-content-center py-3 gap-1">
-          {% for p in range(1, total_pages + 1) %}
-            <a href="?page={{ p }}&q={{ filters.q }}&status={{ filters.status }}&type={{ filters.type }}"
-               class="btn btn-sm {% if p == page %}btn-primary{% else %}btn-outline-secondary{% endif %}">{{ p }}</a>
+          <a href="?page={{ [page - 1, 1]|max }}&q={{ filters.q }}&status={{ filters.status }}&type={{ filters.type }}"
+             class="btn btn-sm btn-outline-secondary {% if page == 1 %}disabled{% endif %}" aria-label="Previous page"><i class="bi bi-chevron-left"></i></a>
+          {% for p in page_window %}
+            {% if p %}
+              <a href="?page={{ p }}&q={{ filters.q }}&status={{ filters.status }}&type={{ filters.type }}"
+                 class="btn btn-sm {% if p == page %}btn-primary{% else %}btn-outline-secondary{% endif %}">{{ p }}</a>
+            {% else %}
+              <span class="px-1 align-self-center text-muted">…</span>
+            {% endif %}
           {% endfor %}
+          <a href="?page={{ [page + 1, total_pages]|min }}&q={{ filters.q }}&status={{ filters.status }}&type={{ filters.type }}"
+             class="btn btn-sm btn-outline-secondary {% if page == total_pages %}disabled{% endif %}" aria-label="Next page"><i class="bi bi-chevron-right"></i></a>
         </div>
         {% endif %}
 

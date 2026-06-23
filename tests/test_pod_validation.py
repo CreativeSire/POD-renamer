@@ -5,9 +5,12 @@ from unittest.mock import patch
 from PIL import Image
 
 from routes.pod import extract_document, prepare_document_for_ai, select_history_candidates, validate_extraction
+from routes.history import pagination_window
 
 
 class ExtractionValidationTests(unittest.TestCase):
+    def test_pagination_window_keeps_current_page_and_boundaries(self):
+        self.assertEqual(pagination_window(83, 166), [1, 2, None, 81, 82, 83, 84, 85, None, 165, 166])
     def test_accepts_a_complete_dala_invoice_with_a_real_date(self):
         result = validate_extraction({
             'supermarket': 'Supersaver',

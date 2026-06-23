@@ -12,6 +12,20 @@ from sqlalchemy import text
 history_bp = Blueprint('history', __name__)
 
 
+def pagination_window(page, total_pages, radius=2):
+    """Return a compact page strip with None standing for an ellipsis."""
+    if total_pages <= 1:
+        return [1]
+    pages = {1, 2, total_pages - 1, total_pages}
+    pages.update(range(max(1, page - radius), min(total_pages, page + radius) + 1))
+    result = []
+    for item in sorted(p for p in pages if 1 <= p <= total_pages):
+        if result and item > result[-1] + 1:
+            result.append(None)
+        result.append(item)
+    return result
+
+
 def super_admin_required(f):
     @wraps(f)
     @login_required
@@ -100,6 +114,7 @@ def index():
         total=total,
         page=page,
         total_pages=total_pages,
+        page_window=pagination_window(page, total_pages),
         filters={'q': search, 'status': status_filter, 'type': type_filter}
     )
 
