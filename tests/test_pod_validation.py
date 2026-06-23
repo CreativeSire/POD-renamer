@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from routes.pod import extract_document, prepare_document_for_ai, validate_extraction
+from routes.pod import extract_document, prepare_document_for_ai, select_history_candidates, validate_extraction
 
 
 class ExtractionValidationTests(unittest.TestCase):
@@ -28,14 +28,28 @@ class ExtractionValidationTests(unittest.TestCase):
                 'date': '31-02-2026',
             }, 'dala')
 
-    def test_rejects_dala_invoice_numbers_that_are_not_six_digits(self):
-        with self.assertRaisesRegex(ValueError, 'exactly 6 digits'):
-            validate_extraction({
-                'supermarket': 'Emmatos Supermarket',
-                'location': 'Aboru',
-                'invoice': '08163956503',
-                'date': '22-06-2026',
-            }, 'dala')
+    def test_keeps_an_unusual_invoice_for_visual_consensus_to_decide(self):
+        result = validate_extraction({
+            'supermarket': 'Emmatos Supermarket',
+            'location': 'Aboru',
+            'invoice': '08163956503',
+            'date': '22-06-2026',
+        }, 'dala')
+
+        self.assertEqual(result['invoice'], '08163956503')
+
+    def test_ranks_a_known_store_and_location_from_history(self):
+        candidates = select_history_candidates(
+            'Emmato Supermarket',
+            'Aboru',
+            [
+                {'store_name': 'Jendol Supermarket', 'location': 'Alakuko', 'uses': 30},
+                {'store_name': 'Emmatos Supermarket', 'location': 'Aboru', 'uses': 4},
+            ],
+        )
+
+        self.assertEqual(candidates[0]['store_name'], 'Emmatos Supermarket')
+        self.assertEqual(candidates[0]['location'], 'Aboru')
 
     def test_keeps_a_specific_multiword_location_when_the_pod_has_one(self):
         result = validate_extraction({

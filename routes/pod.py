@@ -1,5 +1,6 @@
 import base64
 from datetime import datetime
+from difflib import SequenceMatcher
 from io import BytesIO
 import json
 import os
@@ -178,10 +179,8 @@ def validate_extraction(parsed, invoice_type):
     if len(re.findall(r'[A-Za-z0-9]', location)) < 2:
         raise ValueError('Location is missing or unreadable.')
     if invoice_type == 'dala':
-        # DALA delivery invoices use the six-digit number in the printed N0/NO field.
-        # Longer OCR strings are usually a merged receipt, phone number, or stamp.
-        if not re.fullmatch(r'\d{6}', invoice):
-            raise ValueError('DALA invoice number must contain exactly 6 digits.')
+        if not re.fullmatch(r'\d{3,12}', invoice):
+            raise ValueError('DALA invoice number must contain 3-12 digits only.')
         if not re.fullmatch(r'\d{2}-\d{2}-\d{4}', date):
             raise ValueError('DALA date must be DD-MM-YYYY.')
         try:
@@ -204,29 +203,77 @@ def validate_extraction(parsed, invoice_type):
     return result
 
 
-def verification_prompt(invoice_type, parsed):
+def _match_text(value):
+    return re.sub(r'[^a-z0-9]+', ' ', clean(value).lower()).strip()
+
+
+def select_history_candidates(store, location, rows, limit=5):
+    """Rank established store/location pairs without treating them as truth."""
+    target_store, target_location = _match_text(store), _match_text(location)
+    scored = []
+    for row in rows:
+        candidate_store, candidate_location = row['store_name'], row['location']
+        store_score = SequenceMatcher(None, target_store, _match_text(candidate_store)).ratio()
+        location_score = SequenceMatcher(None, target_location, _match_text(candidate_location)).ratio()
+        score = (store_score * 0.75) + (location_score * 0.25)
+        if score >= 0.55:
+            scored.append({**dict(row), 'score': round(score, 3)})
+    return sorted(scored, key=lambda item: (item['score'], item.get('uses', 0)), reverse=True)[:limit]
+
+
+def get_history_candidates(invoice_type, store, location):
+    try:
+        with get_db() as conn:
+            rows = conn.execute(text("""
+                SELECT store_name, location, COUNT(*) AS uses
+                FROM logs
+                WHERE invoice_type = :invoice_type AND status = 'passed'
+                  AND store_name IS NOT NULL AND location IS NOT NULL
+                GROUP BY store_name, location
+                ORDER BY uses DESC
+                LIMIT 400
+            """), {'invoice_type': invoice_type}).mappings().all()
+        return select_history_candidates(store, location, rows)
+    except Exception:
+        return []
+
+
+def verification_prompt(invoice_type, parsed, history_candidates=()):
     fields = ['supermarket', 'location', 'invoice', 'date']
     if invoice_type == 'brand':
         fields.insert(0, 'brand')
     candidate = {field: parsed.get(field, '') for field in fields}
+    history = [
+        {'supermarket': row['store_name'], 'location': row['location'], 'prior_uses': row.get('uses', 0)}
+        for row in history_candidates
+    ]
     return f'''You are the final quality-control verifier for a delivery invoice.
 Inspect the supplied document yourself and compare it against this candidate extraction:
 {json.dumps(candidate, ensure_ascii=False)}
 
+These are similar store/location pairs from earlier successful PODs. They are hints only;
+use one only when the current POD visibly supports it: {json.dumps(history, ensure_ascii=False)}
+
 Approve only if every candidate value is visibly supported by the correct printed
 invoice field. Reject guesses, receipt stamps, handwritten received dates, address
 fragments used as locations, and any disagreement in invoice digits or date.
-Return ONLY raw JSON: {{"valid":true,"reason":"short explanation"}}.'''
+If a history name fixes a spelling variant, return the corrected supermarket/location.
+Return ONLY raw JSON: {{"valid":true,"reason":"short explanation","supermarket":"...","location":"...","invoice":"...","date":"..."}}.'''
 
 
 def extract_document(file_bytes, mime_type, invoice_type):
     prompt = DALA_PROMPT if invoice_type == 'dala' else BRAND_PROMPT
     parsed = validate_extraction(call_gemini(file_bytes, mime_type, prompt), invoice_type)
-    verification = call_gemini(file_bytes, mime_type, verification_prompt(invoice_type, parsed))
+    history_candidates = get_history_candidates(invoice_type, parsed['supermarket'], parsed['location'])
+    verification = call_gemini(file_bytes, mime_type, verification_prompt(invoice_type, parsed, history_candidates))
     if verification.get('valid') is not True:
         reason = clean(verification.get('reason', 'Document values could not be verified.'))
         raise ValueError(f'Quality check failed: {reason}')
-    return parsed
+    resolved = {**parsed}
+    for field in ('supermarket', 'location', 'invoice', 'date'):
+        if clean(verification.get(field, '')):
+            resolved[field] = verification[field]
+    return validate_extraction(resolved, invoice_type)
 
 
 def gemini_error_message(resp):
